@@ -1,0 +1,12 @@
+---
+import AppLayout from "../layouts/AppLayout.astro";
+---
+<AppLayout title="歌单">
+  <h2 id="t">歌单</h2>
+  <p class="muted">公开歌单详情接口上游返回 "check privacy error!"（需登录态签名，fork 未覆盖），暂不可用。已在 docs/spike-1 记录，二期实现。</p>
+</AppLayout>
+
+<script>
+  const name = new URLSearchParams(location.search).get("name");
+  if (name) document.getElementById("t")!.textContent = name;
+</script>

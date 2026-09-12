@@ -1,0 +1,43 @@
+---
+import AppLayout from "../layouts/AppLayout.astro";
+---
+<AppLayout title="我的">
+  <div class="me">
+    <div class="avatar-big" id="avatar"></div>
+    <h2 id="nick" style="margin:12px 0 4px">…</h2>
+    <div id="badges" class="badges" style="justify-content:center"></div>
+    <p class="muted" id="uin"></p>
+    <button id="logout" class="ghost-btn">退出登录</button>
+  </div>
+</AppLayout>
+
+<style>
+  .me { text-align: center; padding-top: 8vh; display: flex; flex-direction: column; align-items: center; }
+  .avatar-big { width: 96px; height: 96px; border-radius: 50%; background: #e8e8ea; overflow: hidden; }
+  .avatar-big img { width: 100%; height: 100%; object-fit: cover; }
+  .ghost-btn { margin-top: 22px; padding: 8px 18px; border-radius: 9px; border: 1px solid var(--line); background: #fff; cursor: pointer; }
+  .ghost-btn:hover { background: #fdecec; border-color: #f3b4b4; color: #c62828; }
+</style>
+
+<script>
+  import { api } from "../lib/api";
+  (async () => {
+    const me: any = await api("/user/detail");
+    const info = me?.profile?.info;
+    if (!info?.nick) { location.href = "/login"; return; }
+    document.getElementById("nick")!.textContent = info.nick;
+    document.getElementById("uin")!.textContent = "UID: " + me.profile.str_musicid;
+    if (info.logo) document.getElementById("avatar")!.innerHTML = `<img src="${String(info.logo).replace(/^http:/, "https:")}" alt=""/>`;
+    const badges: string[] = [];
+    if (info.intro) badges.push(`<i class="badge blue">${info.intro}</i>`);
+    document.getElementById("badges")!.innerHTML = badges.join("");
+
+    document.getElementById("logout")!.onclick = async () => {
+      await api("/logout");
+      await fetch("/api/__save-session", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: "" }),
+      }).catch(() => {});
+      location.href = "/login";
+    };
+  })().catch(() => (location.href = "/login"));
+</script>

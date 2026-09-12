@@ -1,0 +1,56 @@
+---
+import AppLayout from "../layouts/AppLayout.astro";
+---
+<AppLayout title="音乐馆">
+  <h2>音乐馆</h2>
+  <section data-section="recommend">
+    <h3 class="sec">推荐歌单</h3>
+    <div class="grid" id="rec"><div class="muted">加载中…</div></div>
+  </section>
+  <section data-section="ranks" style="margin-top:26px">
+    <h3 class="sec">排行榜</h3>
+    <div class="grid" id="ranks"><div class="muted">加载中…</div></div>
+  </section>
+</AppLayout>
+
+<style>
+  .sec { font-size: 15px; margin: 0 0 12px; }
+</style>
+
+<script>
+  import { api, upPic } from "../lib/api";
+
+  const rec = document.getElementById("rec")!;
+  const ranks = document.getElementById("ranks")!;
+
+  // 推荐歌单：getSongLists（官方歌库列表，code:0 => 响应在 r.response.data.list）
+  api("/getSongLists")
+    .then((r: any) => {
+      const list: any[] = r?.response?.data?.list ?? [];
+      rec.innerHTML = "";
+      for (const x of list.slice(0, 12)) {
+        const a = document.createElement("a");
+        a.className = "card";
+        a.href = `/playlist?tid=${encodeURIComponent(x.tid ?? "")}&name=${encodeURIComponent(x.dissname ?? "")}`;
+        a.innerHTML = `<div class="art"><img src="${upPic(x.imgurl)}" alt="" loading="lazy"/></div>
+          <div class="name">${x.dissname}</div><div class="sub">${x.introduction ?? ""}</div>`;
+        rec.append(a);
+      }
+    })
+    .catch((e) => (rec.innerHTML = `<div class="muted">加载失败：${e.message}</div>`));
+
+  // 排行榜：getTopLists（含封面与标题，曲目仅歌名/歌手无 mid，作为入口卡片）
+  api("/getTopLists")
+    .then((r: any) => {
+      const list: any[] = r?.response?.data?.topList ?? [];
+      ranks.innerHTML = "";
+      for (const t of list.slice(0, 6)) {
+        const a = document.createElement("a");
+        a.className = "card";
+        a.innerHTML = `<div class="art"><img src="${upPic(t.picUrl)}" alt="" loading="lazy"/></div>
+          <div class="name">${t.topTitle ?? t.title ?? "榜单"}</div><div class="sub">${((t.songList ?? [])[0]?.songname ?? "")}</div>`;
+        ranks.append(a);
+      }
+    })
+    .catch((e) => (ranks.innerHTML = `<div class="muted">加载失败：${e.message}</div>`));
+</script>

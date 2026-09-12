@@ -1,0 +1,228 @@
+---
+import PlayerBar from "../components/PlayerBar.astro";
+
+const { title = "Quaver" } = Astro.props;
+// 顶栏导航：首页 = 音乐馆
+const nav = [
+  { href: "/", label: "音乐馆", icon: "home" },
+  { href: "/guess", label: "猜你喜欢", icon: "sparkle" },
+  { href: "/daily", label: "每日 30 首", icon: "disc" },
+  { href: "/liked", label: "我喜欢", icon: "heart" },
+];
+const path = Astro.url.pathname.replace(/\/$/, "") || "/";
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title} · Quaver</title>
+  </head>
+  <body>
+    <div class="frame">
+      <!-- CSD 标题栏拖拽区（壳层 CSS -webkit-app-region / 原生拖拽待定，先占位） -->
+      <header class="titlebar" data-csd-drag>
+        <span class="brand">Quaver</span>
+        <div class="winbtns">
+          <button aria-label="最小化" data-win="min"><svg viewBox="0 0 12 12" width="11" height="11"><path d="M2 6h8" stroke="currentColor" stroke-width="1.2"/></svg></button>
+          <button aria-label="最大化" data-win="max"><svg viewBox="0 0 12 12" width="11" height="11"><rect x="2.5" y="2.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
+          <button aria-label="关闭" data-win="close"><svg viewBox="0 0 12 12" width="11" height="11"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.2"/></svg></button>
+        </div>
+      </header>
+
+      <div class="body">
+        <aside class="sidebar">
+          <a class="user" id="user-header" href="/login" title="点击登录">
+            <span class="avatar" id="avatar">
+              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 19c1.5-3 4-4.5 7-4.5s5.5 1.5 7 4.5"/></svg>
+            </span>
+            <span class="user-meta">
+              <span class="nick" id="nick">未登录</span>
+              <span class="badges" id="badges"></span>
+            </span>
+          </a>
+
+          <nav class="nav">
+            {nav.map((n) => (
+              <a href={n.href} class:list={[{ active: path === n.href }]} data-nav={n.icon}>
+                <Fragment>
+                  {n.icon === "home" && <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/></svg>}
+                  {n.icon === "sparkle" && <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4l1.7 4.3L18 10l-4.3 1.7L12 16l-1.7-4.3L6 10l4.3-1.7z"/><path d="M18.5 15.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></svg>}
+                  {n.icon === "disc" && <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/></svg>}
+                  {n.icon === "heart" && <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20s-7-4.6-9-9c-1.3-3 .8-6.5 4-6.5 2 0 3.5 1.2 5 3 1.5-1.8 3-3 5-3 3.2 0 5.3 3.5 4 6.5-2 4.4-9 9-9 9z"/></svg>}
+                </Fragment>
+                <span>{n.label}</span>
+              </a>
+            ))}
+          </nav>
+
+          <hr class="sep" />
+
+          <div class="playlists" id="playlists"><div class="pl-empty">登录后可见歌单</div></div>
+
+          <a class="settings" href="/settings" title="设置">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.4 5.4l2.1 2.1M16.5 16.5l2.1 2.1M18.6 5.4l-2.1 2.1M7.5 16.5l-2.1 2.1"/></svg>
+          </a>
+        </aside>
+
+        <main class="content"><slot /></main>
+      </div>
+
+      <PlayerBar />
+    </div>
+
+    <script>
+      import { api } from "../lib/api";
+
+      // 侧栏状态（头像/昵称/徽章/歌单）——所有页面共用
+      async function bootSidebar() {
+        try {
+          const st: any = await api("/login/status");
+          const p = st?.data?.profile;
+          if (!p?.info?.nick) return; // 未登录：保持占位样式
+          const me: any = await api("/user/detail");
+          const info = me?.profile?.info ?? {};
+          document.querySelector("#user-header")!.setAttribute("href", "/user");
+          document.querySelector<HTMLImageElement>("#avatar")!.innerHTML = info.logo
+            ? `<img src="${String(info.logo).replace(/^http:/, "https:")}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover"/>`
+            : "";
+          document.getElementById("nick")!.textContent = info.nick;
+          const badges: string[] = [];
+          // 徽章数据驱动：intro=身份简介（如"腾讯音乐人"）。VIP 字段本 fork 接口不提供，勿硬编码。
+          if (info.intro) badges.push(`<i class="badge blue">${info.intro}</i>`);
+          document.getElementById("badges")!.innerHTML = badges.join("");
+
+          const pl: any = await api("/user/playlist?offset=0&limit=8");
+          const box = document.getElementById("playlists")!;
+          box.innerHTML = "";
+          // dirId 201 = 「我喜欢」，导航栏已有入口，列表里跳过避免重复
+          for (const x of (pl?.playlist ?? []).filter((p: any) => p.dirId !== 201)) {
+            const a = document.createElement("a");
+            a.className = "pl";
+            const pic = (x.bigpicUrl || x.picUrl || "").replace(/^http:/, "https:");
+            a.innerHTML = `<span class="thumb">${pic ? `<img src="${pic}" alt="" loading="lazy"/>` : ""}</span><span class="pname">${x.dirName ?? x.name ?? "歌单"}</span>`;
+            // 我喜欢走本地页，其余歌单暂用 dirId（公开详情接口受限，二期换端点）
+            a.href = x.dirId === 201 ? "/liked" : `/playlist?tid=${x.tid ?? ""}&dir=${x.dirId ?? ""}`;
+            box.append(a);
+          }
+          if (!box.children.length) box.innerHTML = `<div class="pl-empty">暂无歌单</div>`;
+        } catch (e) {
+          console.warn("sidebar boot failed", e);
+        }
+      }
+      bootSidebar();
+
+      // CSD 按钮占位：壳层未接管前无操作，派发事件供后续 bridge 监听
+      document.querySelectorAll<HTMLElement>("[data-win]").forEach((b) =>
+        b.addEventListener("click", () => {
+          window.dispatchEvent(new CustomEvent("quaver:window", { detail: b.dataset.win }));
+        }),
+      );
+    </script>
+
+    <style is:global>
+      :root {
+        --bg: #f7f7f8; --card: #fff; --side: #ececec; --ink: #1f2329; --ink2: #6b7280;
+        --acc: #2f7d5c; --hover: #e3e3e4; --line: #d9d9db;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.55 "Noto Sans CJK SC", system-ui, -apple-system, sans-serif; }
+      a { color: inherit; text-decoration: none; }
+      button { font: inherit; }
+
+      .frame { display: flex; flex-direction: column; height: 100vh; }
+      .titlebar {
+        height: 40px; flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+        padding: 0 8px 0 16px; user-select: none; background: var(--bg);
+      }
+      .titlebar [data-csd-drag], .titlebar { -webkit-app-region: drag; }
+      .winbtns { margin-left: auto; display: flex; gap: 6px; -webkit-app-region: no-drag; }
+      .winbtns button {
+        width: 26px; height: 22px; border: 1px solid var(--line); border-radius: 4px;
+        background: var(--card); color: var(--ink2); display: grid; place-items: center; cursor: pointer; padding: 0;
+      }
+      .winbtns button:hover { background: var(--hover); }
+      .winbtns button[data-win="close"]:hover { background: #e81123; border-color: #e81123; color: #fff; }
+      .brand { font-weight: 700; font-size: 13px; letter-spacing: .4px; color: var(--ink2); }
+
+      .body { flex: 1; display: flex; gap: 10px; padding: 0 10px 10px; min-height: 0; }
+
+      .sidebar {
+        flex: 0 0 216px; background: var(--side); border-radius: 14px; padding: 14px 10px;
+        display: flex; flex-direction: column; gap: 10px; overflow: hidden;
+      }
+      .user { display: flex; gap: 10px; align-items: center; padding: 2px 6px; border-radius: 10px; }
+      .user:hover { background: var(--hover); }
+      .avatar {
+        width: 44px; height: 44px; flex: 0 0 auto; border-radius: 50%; overflow: hidden;
+        background: #d5d5d7; color: #8a8f98; display: grid; place-items: center;
+        box-shadow: 0 2px 6px #00000022;
+      }
+      .user-meta { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+      .nick { font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .badges { display: flex; gap: 4px; flex-wrap: wrap; }
+      .badge { font-style: normal; font-size: 10px; line-height: 16px; padding: 0 5px; border-radius: 4px; color: #fff; }
+      .badge.blue { background: #3b7cff; } .badge.orange { background: #ff8a3c; } .badge.green { background: #22b06b; }
+
+      .nav { display: flex; flex-direction: column; gap: 2px; }
+      .nav a {
+        display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 9px;
+        color: #3c4048; font-weight: 500; transition: background .12s;
+      }
+      .nav a:hover { background: var(--hover); }
+      .nav a.active { background: #d8d8da; color: var(--ink); box-shadow: inset 0 0 0 1px #c9c9cc; }
+
+      .sep { border: 0; border-top: 1px dashed #bdbdc0; margin: 4px 6px; }
+
+      .playlists { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
+      .pl { display: flex; gap: 9px; align-items: center; padding: 6px 7px; border-radius: 8px; min-height: 44px; }
+      .pl:hover { background: var(--hover); }
+      .pl .thumb { width: 32px; height: 32px; flex: 0 0 auto; border-radius: 6px; background: #cfcfd2; overflow: hidden; }
+      .pl .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .pname { font-size: 13px; color: #3c4048; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .pl-empty { color: #9aa0a6; font-size: 12px; padding: 8px; }
+
+      .settings { margin-top: auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 9px; color: #3c4048; }
+      .settings:hover { background: var(--hover); }
+
+      .content { flex: 1; background: var(--card); border-radius: 14px; overflow-y: auto; padding: 20px 24px; min-width: 0; }
+      .content h2 { margin: 0 0 14px; font-size: 18px; }
+      .muted { color: var(--ink2); }
+
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 16px; }
+      .card { cursor: pointer; border-radius: 10px; padding: 4px; }
+      .card:hover { background: #f2f2f3; }
+      .card .art { aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: #e8e8ea; position: relative; }
+      .card .art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .card .name { font-size: 13px; margin-top: 7px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+      .card .sub { font-size: 11px; color: var(--ink2); margin-top: 2px; }
+      .card.playing { outline: 2px solid var(--acc); }
+
+      .rows { display: flex; flex-direction: column; gap: 2px; }
+      .row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+      .row:hover { background: #f2f2f3; }
+      .row.playing { background: #e8f3ee; }
+      .row .idx { width: 22px; text-align: right; color: #9aa0a6; font-size: 12px; flex: 0 0 auto; }
+      .row .rthumb { width: 40px; height: 40px; border-radius: 6px; background: #e8e8ea; overflow: hidden; flex: 0 0 auto; }
+      .row .rthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .row .rt { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .row .ra { color: var(--ink2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .row .dur { margin-left: auto; color: #9aa0a6; font-size: 12px; }
+
+      /* 底部播放条：容器占位（待定，先渲染但不做完整交互） */
+      .player {
+        flex: 0 0 64px; margin: 0 10px 10px; background: var(--side); border-radius: 14px;
+        display: flex; align-items: center; gap: 14px; padding: 0 16px; color: var(--ink2);
+      }
+      .player .cover { width: 44px; height: 44px; border-radius: 8px; background: #d5d5d7; overflow: hidden; flex: 0 0 auto; }
+      .player .cover img { width: 100%; height: 100%; object-fit: cover; }
+      .player .now { min-width: 0; width: 240px; }
+      .player .now .t { font-size: 13px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .player .now .s { font-size: 11px; }
+      .player audio { flex: 1; height: 32px; min-width: 0; }
+      .player .hint { font-size: 12px; }
+    </style>
+  </body>
+</html>
