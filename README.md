@@ -9,7 +9,11 @@ Quaver Music，是一款 QQ 音乐的第三方客户端，其目的是为了让 
 名字取自于八分音符，对应了音乐，“QQ” 的 Q 字母。
 
 <p align="center">
-  <img src="img/screenshot.webp" width="800">
+  <img src="img/sc1.webp" width="800">
+</p>
+
+<p align="center">
+  <img src="img/sc2.webp" width="800">
 </p>
 
 > [!CAUTION]
@@ -19,11 +23,9 @@ Quaver Music，是一款 QQ 音乐的第三方客户端，其目的是为了让 
 
 我一直是 QQ 音乐的用户，也用过 NCM 的第三方客户端，Spotify，Apple Music。
 
-然而 QQ 音乐一直没有什么好用的第三方客户端，而同 TME 系的有 [MoeKoe](https://music.moekoe.cn/) ，而转机是在 Lyrune。
+然而 QQ 音乐一直没有什么好用的第三方客户端，而同 TME 系的有 [MoeKoe](https://music.moekoe.cn/) ，而转机是在 [Lyrune](https://github.com/amtoaer/lyrune)，一个挺好用的 Rust Q 音第三方客户端，但可惜 Rust 太重了，而且我 Rust 是真的菜。（是的，原作者实现的 CSD 确实比我自己想的上面扩展 CSD 好很多）
 
-我贡献了个 Vibe Coding 的 Inhibit 和 CI AppImage 构建的 PR，但一直觉得没有 CSD，我也因此 Vibe 了一个 Titlebar，上游作者认为 CSD 对 WM 不重要，隔壁群有认为，这样在 DE 还是难受，故我觉得有必要考虑重新实现一个第三方的 QQ 音乐客户端。
-
-使用 Electron，对接入 NodeJS 的 API 而言也很方便，开发也很快，也可以避免我孱弱的 Rust 开发，与此同时，后端我也能玩 C++ 等。故此项目诞生，现正在 Prototype 阶段，逐步新增功能。
+所以使用 Electron，对接入 NodeJS 的 API 而言也很方便，开发也很快，也可以避免我孱弱的 Rust 开发，与此同时，后端我也能玩 C++ 这一个我更熟悉的编程语言。故此项目诞生，现正在 Prototype 阶段，逐步新增功能。
 
 # 协议
 
