@@ -8,6 +8,10 @@ Quaver Music，是一款 QQ 音乐的第三方客户端，其目的是为了让 
 
 名字取自于八分音符，对应了音乐，“QQ” 的 Q 字母。
 
+<p align="center">
+  <img src="img/screenshot.webp" width="800">
+</p>
+
 > [!CAUTION]
 > 真爱音乐，尊重正版，音乐平台不易，该应用**不提供盗版 QQ 音乐服务！**
 
