@@ -44,7 +44,7 @@ export function renderSongRows(box: HTMLElement, songs: any[], hooks: RowHooks =
     row.querySelector(".rthumb")!.addEventListener("click", () => hooks.onPlay?.(s, i, songs));
     row.querySelector("[data-love]")!.addEventListener("click", (e) => {
       e.stopPropagation();
-      player.toggleLove(s.mid);
+      player.toggleLove(s);
       const on = player.loved.has(s.mid);
       const btn = e.currentTarget as HTMLElement;
       btn.textContent = on ? "♥" : "♡";
@@ -68,11 +68,11 @@ export function renderSongRows(box: HTMLElement, songs: any[], hooks: RowHooks =
 export async function loadLiked(box: HTMLElement, hooks: RowHooks = {}, limit = 300): Promise<any[]> {
   box.innerHTML = `<div class="muted">加载中…</div>`;
   const all: any[] = [];
-  for (let off = 0; off < limit; off += 30) {
-    const r: any = await api(`/user/liked-songs?offset=${off}&limit=30`);
+  for (let page = 1; (page - 1) * 30 < limit; page++) {
+    const r: any = await api(`/user/liked?page=${page}&num=30`);
     const batch = r?.songs ?? [];
     all.push(...batch);
-    if (!r?.more || batch.length === 0) break;
+    if (!r?.hasmore || batch.length === 0) break;
   }
   box.innerHTML = "";
   renderSongRows(box, all, hooks);

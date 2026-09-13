@@ -1,11 +1,12 @@
 // Quaver — 全局播放器状态机（常驻于 SPA 壳层，跨视图不销毁，音频不中断）
 // 订阅式：任何状态变化 notify 所有 UI（播放条 / 正在播放页 / 队列面板）。
-import { api, getPlayUrl, coverUrl } from "./lib/api";
+import { api, postJson, getPlayUrl, coverUrl } from "./lib/api";
 import { parseLrc, type LyricLine } from "./lyric";
 
 export type Song = {
   mid: string;
   id?: number;
+  type?: number;
   name: string;
   singer?: { name: string }[];
   album?: { pmid?: string };
@@ -21,20 +22,6 @@ const LS_KEY = "quaver.loved.v1";
 const VOL_KEY = "quaver.volume.v1";
 const MUTE_KEY = "quaver.muted.v1";
 const TRANS_KEY = "quaver.showTrans.v1";
-
-// base64 -> UTF-8 文本（上游 lyric CGI 的 trans 字段是 base64；relay 合并路径可能已解码成明文——
-// 只在"看起来像纯 base64 且解出来含 [ 时间戳"时才解码，否则原样返回）
-function b64utf8(s: string): string {
-  if (!s) return "";
-  if (s.includes("[") || !/^[A-Za-z0-9+/=\s]+$/.test(s)) return s;
-  try {
-    const bin = atob(s.trim());
-    const dec = new TextDecoder("utf-8").decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
-    return dec.includes("[") ? dec : "";
-  } catch {
-    return "";
-  }
-}
 
 class Player {
   audio = new Audio();
@@ -153,10 +140,9 @@ class Player {
     this.lyricState = "loading";
     this.notify();
     try {
-      const r: any = await api(`/getLyric?songmid=${encodeURIComponent(s.mid)}`);
+      const d: any = await api(`/song/${encodeURIComponent(s.mid)}/lyric?trans=1`);
       if (seq !== this.lyricSeq) return;
-      const resp = r?.response ?? {};
-      const lines = parseLrc(resp.lyric ?? "", b64utf8(resp.trans ?? ""));
+      const lines = parseLrc(d?.lyric ?? "", d?.trans ?? "");
       // 纯音乐占位行（"[00:00.00]此歌曲为没有填词…"）也照常显示
       this.lyrics = lines;
       this.lyricState = lines.length ? "ok" : "none";
@@ -202,11 +188,22 @@ class Player {
     this.notify();
   }
 
-  toggleLove(mid?: string) {
-    if (!mid) return;
-    if (this.loved.has(mid)) this.loved.delete(mid); else this.loved.add(mid);
+  toggleLove(song?: Song) {
+    const mid = song?.mid;
+    if (!mid || !song?.id) return;
+    const on = !this.loved.has(mid);
+    // 乐观更新（QQ 服务端写失败时回滚并提示）
+    if (on) this.loved.add(mid); else this.loved.delete(mid);
     localStorage.setItem(LS_KEY, JSON.stringify([...this.loved]));
     this.notify();
+    void postJson(on ? "/song/like" : "/song/unlike", { song_id: song.id, song_type: song.type ?? 0 })
+      .catch((e) => {
+        console.warn("收藏同步失败", e);
+        if (on) this.loved.delete(mid); else this.loved.add(mid);
+        localStorage.setItem(LS_KEY, JSON.stringify([...this.loved]));
+        this.error = "收藏失败：" + (e?.message ?? e);
+        this.notify();
+      });
   }
 
   /** 高亮当前页面对应的歌曲行（.playing 类），与旧行为一致 */

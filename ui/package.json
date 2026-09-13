@@ -16,6 +16,7 @@
   "devDependencies": {
     "@types/node": "^22.20.2",
     "electron": "^44.3.0",
+    "puppeteer-core": "^25.10.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0"
   },

@@ -1,0 +1,4 @@
+[submodule "vendor/QQMusicApi"]
+	path = vendor/QQMusicApi
+	url = https://github.com/L-1124/QQMusicApi
+	shallow = true

@@ -66,7 +66,7 @@ export function PlayerBar(): HTMLElement {
   play.onclick = () => player.toggle();
   $("pb-next").onclick = () => player.next(false);
   loop.onclick = () => player.cycleMode();
-  love.onclick = () => player.toggleLove(player.current?.mid);
+  love.onclick = () => player.toggleLove(player.current);
   $("pb-queue").onclick = () => { player.queueOpen = !player.queueOpen; player.notifyPublic(); };
   mute.onclick = () => player.toggleMute();
   mute2.onclick = () => player.toggleMute();

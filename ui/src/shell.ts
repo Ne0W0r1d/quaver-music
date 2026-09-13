@@ -4,7 +4,7 @@
 // 切视图不打断音频。地址栏 hash 路由（file:// 与壳层加载均兼容），
 // 旧的多页入口（daily.html 等）保留为薄跳转层。
 import "./style.css";
-import { api, coverUrl } from "./lib/api";
+import { api, coverUrl, upPic } from "./lib/api";
 import { player } from "./player";
 import { PlayerBar } from "./components/PlayerBar";
 import { NowPlaying } from "./components/NowPlaying";
@@ -93,7 +93,7 @@ export function bootShell() {
   frame.innerHTML = `
     <!-- CSD 标题栏拖拽区（壳层 CSS -webkit-app-region / 原生拖拽待定，先占位） -->
     <header class="titlebar" data-csd-drag>
-      <span class="brand">Quaver</span>
+      <span class="brand">Quaver Music - Yet another QQ Music Player</span>
       <div class="winbtns">
         <button aria-label="最小化" data-win="min"><svg viewBox="0 0 12 12" width="11" height="11"><path d="M2 6h8" stroke="currentColor" stroke-width="1.2"/></svg></button>
         <button aria-label="最大化" data-win="max"><svg viewBox="0 0 12 12" width="11" height="11"><rect x="2.5" y="2.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
@@ -140,34 +140,39 @@ export function bootShell() {
   renderRoute();
 }
 
-// 侧栏状态（头像/昵称/徽章/歌单）
+// 侧栏状态（头像/昵称/会员徽章/歌单）
 async function bootSidebar() {
   try {
     const st: any = await api("/login/status");
-    const p = st?.data?.profile;
-    if (!p?.info?.nick) return; // 未登录：保持占位样式
-    const me: any = await api("/user/detail");
-    const info = me?.profile?.info ?? {};
+    if (!st?.logged_in) return; // 未登录：保持占位样式
+    const [me, vip] = await Promise.all([
+      api<any>("/user/me").catch(() => null),
+      api<any>("/user/vip").catch(() => null),
+    ]);
+    const base = me?.base_info;
+    if (!base?.name) return;
     document.querySelector("#user-header")!.setAttribute("href", "#/user");
-    document.querySelector<HTMLElement>("#avatar")!.innerHTML = info.logo
-      ? `<img src="${String(info.logo).replace(/^http:/, "https:")}" alt=""/>`
+    document.querySelector<HTMLElement>("#avatar")!.innerHTML = base.avatar
+      ? `<img src="${String(base.avatar).replace(/^http:/, "https:")}" alt=""/>`
       : icons.userPh;
-    document.getElementById("nick")!.textContent = info.nick;
+    document.getElementById("nick")!.textContent = base.name;
+    // 徽章数据驱动：来自 user.get_vip_info（fork 的 /user/detail 没有 vip 字段——这里才有）
     const badges: string[] = [];
-    // 徽章数据驱动：intro=身份简介（如"腾讯音乐人"）。VIP 字段本 fork 接口不提供，勿硬编码。
-    if (info.intro) badges.push(`<i class="badge blue">${info.intro}</i>`);
+    if (vip?.identity?.huge_vip) badges.push(`<i class="badge">豪华绿钻</i>`);
+    else if (vip?.identity?.vip) badges.push(`<i class="badge">绿钻</i>`);
+    if (vip?.svip) badges.push(`<i class="badge blue">超级会员</i>`);
     document.getElementById("badges")!.innerHTML = badges.join("");
 
-    const pl: any = await api("/user/playlist?offset=0&limit=8");
+    // 我喜欢（dirid=201 固定）不进歌单列表——导航栏已有入口
+    const pl: any = await api("/user/created-songlists").catch(() => null);
     const box = document.getElementById("playlists")!;
     box.innerHTML = "";
-    // dirId 201 = 「我喜欢」，导航栏已有入口，列表里跳过避免重复
-    for (const x of (pl?.playlist ?? []).filter((p: any) => p.dirId !== 201)) {
+    for (const x of (pl?.playlists ?? []).filter((p: any) => p.dirid !== 201)) {
       const a = document.createElement("a");
       a.className = "pl";
-      const pic = (x.bigpicUrl || x.picUrl || "").replace(/^http:/, "https:");
-      a.innerHTML = `<span class="thumb">${pic ? `<img src="${pic}" alt="" loading="lazy"/>` : ""}</span><span class="pname">${x.dirName ?? x.name ?? "歌单"}</span>`;
-      a.href = x.dirId === 201 ? "#/liked" : `#/playlist?id=${encodeURIComponent(x.tid ?? "")}&name=${encodeURIComponent(x.dirName ?? x.name ?? "歌单")}`;
+      const pic = upPic(x.picurl || x.bigpic_url);
+      a.innerHTML = `<span class="thumb">${pic ? `<img src="${pic}" alt="" loading="lazy"/>` : ""}</span><span class="pname">${x.title ?? "歌单"}</span>`;
+      a.href = `#/playlist?id=${encodeURIComponent(x.id ?? "")}&name=${encodeURIComponent(x.title ?? "歌单")}`;
       box.append(a);
     }
     if (!box.children.length) box.innerHTML = `<div class="pl-empty">暂无歌单</div>`;
