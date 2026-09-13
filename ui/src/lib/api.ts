@@ -1,4 +1,4 @@
-// Quaver — 浏览器侧 API 封装（全部走同源 /api 中继，dev 由 server route 转发 :3200）
+// Quaver — 浏览器侧 API 封装（全部走同源 /api 中继，dev/preview 由 relay.ts 转发 :3200）
 export const api = <T = any>(path: string): Promise<T> =>
   fetch("/api" + path).then((r) => {
     if (!r.ok) throw new Error(`HTTP ${r.status} ${path}`);
@@ -31,5 +31,3 @@ export function getPlayUrl(song: any, quality = "128mp3") {
     },
   );
 }
-
-export const play = async (song: any) => getPlayUrl(song).then((url) => window.QuaverPlayer?.playUrl(url, song));
