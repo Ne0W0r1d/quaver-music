@@ -1,6 +1,6 @@
 // Quaver — 路由视图表（仅内容区渲染；播放器/侧栏常驻）
 // 视图函数: async (root, query) => cleanup?
-import { api, upPic, getQuality, setQuality } from "./lib/api";
+import { api, upPic, getQuality, setQuality, identityBadges } from "./lib/api";
 import { renderSongRows, loadLiked, type RowHooks } from "./lib/songs";
 import { player } from "./player";
 
@@ -141,7 +141,7 @@ function listPage(root: HTMLElement, title: string, note?: string) {
 }
 
 async function guessView(root: HTMLElement) {
-  const box = listPage(root, "猜你喜欢", "官方个性化推荐（推荐雷达 CGI），登录后可得更准结果。");
+  const box = listPage(root, "猜你喜欢", "品味懂你意思");
   try {
     const d: any = await api("/recommend/guess");
     const songs: any[] = d?.songs ?? [];
@@ -198,11 +198,11 @@ async function settingsView(root: HTMLElement) {
   wrap.innerHTML = `
     <div class="set-row"><span>播放音质</span>
       <select id="quality" aria-label="播放音质">
-        <option value="128">标准 128k</option>
-        <option value="320">HQ 320k</option>
-        <option value="flac">SQ 无损 FLAC</option>
+        <option value="128">SD（标准 128k）</option>
+        <option value="320">HQ（高品质 320k）</option>
+        <option value="flac">SQ（无损 FLAC）</option>
       </select></div>
-    <p class="muted">高品质档位取决于账号会员身份；非会员请求高档位会被降级。加密档位（mflac/qmc）需后续外挂解密代理。</p>
+    <p class="muted">该选项将研究于 Ellen Chisa 分支启用第二期 Spike 探针试验评估，先启用 SD、HQ、SQ 三挡设置</p>
     <div class="set-row" id="sidecar-state"><span>Sidecar 状态</span><span class="muted">检测中…</span></div>`;
   root.append(wrap);
   const sel = wrap.querySelector<HTMLSelectElement>("#quality")!;
@@ -223,14 +223,10 @@ async function userView(root: HTMLElement) {
     ]);
     const base = home?.base_info;
     if (!base?.name) { location.hash = "#/login"; return; }
-    const badges: string[] = [];
-    if (vip?.identity?.huge_vip) badges.push(`<i class="badge">豪华绿钻</i>`);
-    else if (vip?.identity?.vip) badges.push(`<i class="badge">绿钻</i>`);
-    if (vip?.svip) badges.push(`<i class="badge blue">超级会员</i>`);
     wrap.innerHTML = `
       <div class="avatar-big">${base.avatar ? `<img src="${String(base.avatar).replace(/^http:/, "https:")}" alt=""/>` : ""}</div>
       <h2 style="margin:12px 0 4px">${base.name}</h2>
-      <div class="badges" style="justify-content:center">${badges.join("")}</div>
+      <div class="badges" style="justify-content:center">${identityBadges(home, vip)}</div>
       <p class="muted">UID: ${base.encrypted_uin ?? ""}</p>
       <button id="logout" class="ghost-btn">退出登录</button>`;
     wrap.querySelector<HTMLElement>("#logout")!.onclick = async () => {

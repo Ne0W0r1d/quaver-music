@@ -35,7 +35,6 @@ export function PlayerBar(): HTMLElement {
       <button class="pb-btn pb-ghost" id="pb-loop" aria-label="循环模式"></button>
       <button class="pb-btn pb-ghost" id="pb-love" aria-label="收藏">${icons.heart}</button>
       <button class="pb-btn pb-ghost" id="pb-queue" aria-label="播放队列">${icons.queue}</button>
-      <button class="pb-btn pb-ghost" id="pb-expand" aria-label="展开歌词">${icons.chevronUp}</button>
     </div>
     <!-- 音量浮窗：静音控制 + 滑杆 + 读数 -->
     <div class="pb-volpop" id="pb-volpop" role="group" aria-label="音量">
@@ -48,19 +47,18 @@ export function PlayerBar(): HTMLElement {
   const $ = <T extends HTMLElement>(id: string) => el.querySelector<T>("#" + id)!;
   const cover = $("pb-cover"), title = $("pb-title"), sub = $("pb-sub");
   const time = $("pb-time"), fill = $("pb-fill");
-  const play = $("pb-play"), loop = $("pb-loop"), love = $("pb-love"), expand = $("pb-expand");
+  const play = $("pb-play"), loop = $("pb-loop"), love = $("pb-love");
   const mute = $("pb-mute"), mute2 = $("pb-mute2");
   const pop = $("pb-volpop");
   const vol = el.querySelector<HTMLInputElement>("#pb-vol")!;
   const volnum = $("pb-volnum");
 
   const toggleExpand = () => {
-    if (!player.current) return;
+    if (!player.current) { player.expanded = false; player.notifyPublic(); return; } // 页内无收起按钮：无歌时强制回退，防卡死
     player.expanded = !player.expanded;
     player.notifyPublic();
   };
   cover.onclick = toggleExpand;
-  expand.onclick = toggleExpand;
 
   $("pb-prev").onclick = () => player.prev();
   play.onclick = () => player.toggle();
@@ -97,11 +95,11 @@ export function PlayerBar(): HTMLElement {
   let dragging = false;
   let scrubFrac = 0;
   const fracOf = (clientX: number) => {
-    const r = el.getBoundingClientRect(); // 染色 fill 即进度条：左右各缩进 10px 与 fill 对齐
-    return clamp01((clientX - r.left - 10) / (r.width - 20));
+    const r = el.getBoundingClientRect(); // fill 贴紧 border 内侧两端：坐标映射同几何（1px 内缩）
+    return clamp01((clientX - r.left - 1) / (r.width - 2));
   };
   const paintScrub = () => {
-    el.style.setProperty("--pf", String(scrubFrac)); // 无单位：fill 宽度 = calc((100% - 20px) * --pf)
+    el.style.setProperty("--pf", String(scrubFrac)); // 无单位：fill 宽度 = calc((100% - 2px) * --pf)
     time.textContent = `${fmtDur(scrubFrac * player.duration)} / ${fmtDur(player.duration)}`;
   };
   el.addEventListener("pointerdown", (e) => {
@@ -153,6 +151,8 @@ export function PlayerBar(): HTMLElement {
     const c = toBarColors(rgb);
     el.style.setProperty("--tint", c.soft);
     el.style.setProperty("--tint-line", c.line);
+    // 播放页歌词当前句与进度条同源染色：提升到 root 供 .np 使用
+    document.documentElement.style.setProperty("--np-hl", c.line);
   }
 
   // 订阅状态
@@ -168,7 +168,6 @@ export function PlayerBar(): HTMLElement {
     loop.classList.toggle("on", player.mode !== "off");
     love.innerHTML = s && player.loved.has(s.mid) ? icons.heartFill : icons.heart;
     love.classList.toggle("on", !!s && player.loved.has(s.mid));
-    expand.innerHTML = player.expanded ? icons.chevronDown : icons.chevronUp;
     if (!dragging) {
       const d = player.duration, t = player.time;
       const frac = player.current && d ? Math.min(1, t / d) : 0; // 无当前曲：分数归零，染色条不残留

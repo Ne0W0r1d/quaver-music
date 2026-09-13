@@ -40,6 +40,18 @@ export const fmtTime = (sec: number) => {
   return `${m}:${String(s).padStart(2, "0")}`;
 };
 
+// 身份徽章（侧栏/我的页共用）：会员只展示最高档（超级会员 > 豪华绿钻 > 绿钻），
+// 音乐人（IsSinger 认证）独立一枚蓝色徽章；非音乐人不展示。
+// 配色约定：绿=豪华绿钻/绿钻，橙=超级会员，蓝=音乐人（.badge.green/.orange/.blue）。
+export function identityBadges(me: any, vip: any): string {
+  const badges: string[] = [];
+  if (vip?.svip) badges.push(`<i class="badge orange">超级会员</i>`);
+  else if (vip?.identity?.huge_vip) badges.push(`<i class="badge green">豪华绿钻</i>`);
+  else if (vip?.identity?.vip) badges.push(`<i class="badge green">绿钻</i>`);
+  if (me?.base_info?.is_singer) badges.push(`<i class="badge blue">音乐人</i>`);
+  return badges.join("");
+}
+
 // 音质档位 = sidecar file_type 整数（映射表见 api-server app.py FILE_TYPES）
 export const QUALITIES: Record<string, number> = { "128": 13, "320": 12, flac: 7 };
 export type Quality = keyof typeof QUALITIES;

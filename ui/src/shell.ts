@@ -4,7 +4,7 @@
 // 切视图不打断音频。地址栏 hash 路由（file:// 与壳层加载均兼容），
 // 旧的多页入口（daily.html 等）保留为薄跳转层。
 import "./style.css";
-import { api, coverUrl, upPic } from "./lib/api";
+import { api, coverUrl, upPic, identityBadges } from "./lib/api";
 import { player } from "./player";
 import { PlayerBar } from "./components/PlayerBar";
 import { NowPlaying } from "./components/NowPlaying";
@@ -156,12 +156,8 @@ async function bootSidebar() {
       ? `<img src="${String(base.avatar).replace(/^http:/, "https:")}" alt=""/>`
       : icons.userPh;
     document.getElementById("nick")!.textContent = base.name;
-    // 徽章数据驱动：来自 user.get_vip_info（fork 的 /user/detail 没有 vip 字段——这里才有）
-    const badges: string[] = [];
-    if (vip?.identity?.huge_vip) badges.push(`<i class="badge">豪华绿钻</i>`);
-    else if (vip?.identity?.vip) badges.push(`<i class="badge">绿钻</i>`);
-    if (vip?.svip) badges.push(`<i class="badge blue">超级会员</i>`);
-    document.getElementById("badges")!.innerHTML = badges.join("");
+    // 徽章数据驱动：会员最高档（橙=超级会员/绿=绿钻系）+ 音乐人（蓝）
+    document.getElementById("badges")!.innerHTML = identityBadges(me, vip);
 
     // 我喜欢（dirid=201 固定）不进歌单列表——导航栏已有入口
     const pl: any = await api("/user/created-songlists").catch(() => null);

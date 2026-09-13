@@ -38,7 +38,7 @@ button { font: inherit; }
 .winbtns button[data-win="close"]:hover { background: #e81123; border-color: #e81123; color: #fff; }
 .brand { font-weight: 700; font-size: 13px; letter-spacing: .4px; color: var(--ink2); }
 
-.body { flex: 1; display: flex; gap: 10px; padding: 0 10px 84px; min-height: 0; }
+.body { flex: 1; display: flex; gap: 10px; padding: 10px 10px 84px; min-height: 0; }
 .sidebar {
   flex: 0 0 216px; border-radius: 14px; padding: 14px 10px;
   display: flex; flex-direction: column; gap: 10px; overflow: hidden; min-height: 0;
@@ -89,7 +89,7 @@ button { font: inherit; }
 .muted { color: var(--ink2); }
 
 /* 歌单/专辑信息头（设计稿：左封面 右 标题/制作/描述） */
-.pl-head { display: flex; gap: 20px; align-items: flex-end; margin-bottom: 20px; }
+.pl-head { display: flex; gap: 20px; align-items: flex-end; margin: 6px 0 20px; }
 .pl-back {
   align-self: flex-start; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 50%;
   border: 1px solid var(--line); background: var(--card); color: var(--ink2);
@@ -104,7 +104,7 @@ button { font: inherit; }
 .pl-desc { font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* SPA 页面大标题（对齐设计稿：首页 = 超大深灰粗体） */
-.page-title { margin: 2px 0 18px; font-size: 26px; font-weight: 800; letter-spacing: .5px; color: #2a2e35; }
+.page-title { margin: 6px 0 18px; font-size: 26px; font-weight: 800; letter-spacing: .5px; color: #2a2e35; }
 .page-note { margin: -10px 0 16px; font-size: 12.5px; }
 .cnt { font-size: 13px; font-weight: 400; }
 
@@ -145,12 +145,14 @@ button { font: inherit; }
   box-shadow: 0 6px 28px rgba(15,20,30,.12);
   backdrop-filter: blur(26px) saturate(1.5); -webkit-backdrop-filter: blur(26px) saturate(1.5);
 }
-/* 背景染色进度条：已播区 = 封面主色。z-index:0 而非负值——.player 有 backdrop-filter
-   （filter 系），负 z-index 会连元素一起被压到 .player 自身背景之下而不可见。
+/* 背景染色进度条：已播区 = 封面主色。贴紧 Bar 左右两端（border 内侧），
+   R 角与 .player(14px) 同心（13px），满进度时正好铺满内沿。
+   z-index:0 而非负值——.player 有 backdrop-filter（filter 系），
+   负 z-index 会连元素一起被压到 .player 自身背景之下而不可见。
    块级背景天然在常规流文字/按钮之下，故 fill 置 0、控件置 1 即可。 */
 .pb-fill {
-  position: absolute; top: 1px; bottom: 1px; left: 10px; width: calc((100% - 20px) * var(--pf, 0)); z-index: 0;
-  border-radius: 13px 4px 4px 13px;
+  position: absolute; top: 1px; bottom: 1px; left: 1px; width: calc((100% - 2px) * var(--pf, 0)); z-index: 0;
+  border-radius: 13px;
   background: var(--tint, rgba(25,194,216,.75));
   transition: background-color .5s ease;
   pointer-events: none;
@@ -222,12 +224,15 @@ button { font: inherit; }
 .pb-vol.off::-moz-range-thumb { background: #b6bac0; }
 
 /* ===================== 正在播放 / 歌词（全屏覆盖层） ===================== */
+/* 展开/收起 = 上下滑动面板（fixed 元素不产生滚动条，translateY 到屏外即可） */
 .np {
   position: fixed; inset: 40px 0 0 0; z-index: 50; overflow: hidden;
   display: grid; place-items: center;
-  opacity: 0; pointer-events: none; transition: opacity .28s ease;
+  opacity: 0; pointer-events: none;
+  transform: translateY(100%);
+  transition: transform .34s cubic-bezier(.32,.72,.24,1), opacity .3s ease;
 }
-.np.open { opacity: 1; pointer-events: auto; }
+.np.open { opacity: 1; pointer-events: auto; transform: none; }
 .np-bg {
   position: absolute; inset: -80px; background-size: cover; background-position: center;
   filter: blur(60px) saturate(1.6) brightness(1.08); opacity: var(--np-vis, 0);
@@ -241,38 +246,45 @@ button { font: inherit; }
 }
 .np-tool:hover { background: #ffffff2e; color: #fff; }
 .np-tool.on { color: var(--cyan); background: #19c2d826; }
-.np-collapse { right: 88px; }
-#np-trans { right: 132px; }
+#np-trans { right: 88px; }
 .np-inner {
   position: relative; z-index: 1; width: min(1060px, 92%); height: min(560px, calc(100vh - 150px));
-  display: grid; grid-template-columns: 1.25fr .9fr; gap: 40px; align-items: center;
+  display: grid; grid-template-columns: 1.15fr 1fr; gap: 48px; align-items: center;
   padding-bottom: 40px; /* 给播放条让位 */
 }
+/* 歌词 = 整首列表可滚轮翻阅；当前句清晰（颜色与进度条染色同源），其余模糊渐隐。
+   文本全部左对齐（原文/翻译同左）。逐字卡拉OK动画后续叠加在 .cur 上。 */
 .np-lyrics {
   position: relative; height: 100%; overflow-y: auto; scrollbar-width: none;
   mask-image: linear-gradient(180deg, transparent, #000 22%, #000 78%, transparent);
   scroll-behavior: smooth;
 }
 .np-lyrics::-webkit-scrollbar { display: none; }
-.np-ly-line {
-  padding: 9px 24px; text-align: center; cursor: pointer; transition: opacity .25s, color .25s, filter .25s, transform .3s;
-  opacity: .34; filter: blur(.4px); color: #fffe; font-size: 15.5px; font-weight: 500;
-}
 .np-lyrics::before, .np-lyrics::after { content: ""; display: block; height: 38%; flex: none; }
+.np-ly-line {
+  padding: 9px 4px; text-align: left; cursor: pointer;
+  transition: opacity .3s ease, filter .3s ease, transform .3s ease, color .3s ease;
+  opacity: .34; filter: blur(1.6px); color: #fff; font-size: 17px; font-weight: 500;
+}
 .np-ly-line .l1 { display: block; }
-.np-ly-line .l2 { display: block; font-size: 12.5px; opacity: .75; margin-top: 2px; }
+.np-ly-line .l2 { display: block; font-size: 12.5px; opacity: .8; margin-top: 2px; }
 .np.no-trans .np-ly-line .l2 { display: none; }
-.np-ly-line.near { opacity: .62; }
-.np-ly-line.cur { opacity: 1; filter: none; color: #fff; font-size: 19px; font-weight: 800; transform: scale(1.02); text-shadow: 0 2px 14px #0004; }
+/* 当前句：清晰、加大、染色 = 进度条同源 --np-hl（PlayerBar 取封面主色写入 root） */
+.np-ly-line.cur {
+  opacity: 1; filter: none; color: var(--np-hl, #fff);
+  font-size: 20px; font-weight: 800; transform: scale(1.015); text-shadow: 0 2px 14px #0004;
+}
 .np-ly-empty { text-align: center; color: #fff8; font-size: 14px; padding: 60px 0; }
-.np-side { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+/* 封面在上，歌名/「歌手 - 专辑」在下——整块右缘与封面右缘齐平（设计稿） */
+.np-side { display: flex; flex-direction: column; align-items: flex-end; gap: 0; min-width: 0; width: min(360px, 100%); margin-left: auto; }
 .np-cover {
   width: min(320px, 38vh); aspect-ratio: 1; border-radius: 18px; overflow: hidden; background: #ffffff14;
   box-shadow: 0 20px 60px #0006; display: grid; place-items: center; color: #fff5;
 }
 .np-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.np-title { margin-top: 18px; font-size: 22px; font-weight: 800; color: #fff; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-.np-artist { font-size: 13.5px; color: #fffb; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.np-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; min-width: 0; max-width: 100%; margin-top: 18px; text-align: right; }
+.np-title { font-size: 22px; font-weight: 800; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.np-artist { font-size: 13.5px; color: #fffb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 
 /* ===================== 队列面板 ===================== */
 .queue-panel {
