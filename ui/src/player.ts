@@ -1,6 +1,6 @@
 // Quaver — 全局播放器状态机（常驻于 SPA 壳层，跨视图不销毁，音频不中断）
 // 订阅式：任何状态变化 notify 所有 UI（播放条 / 正在播放页 / 队列面板）。
-import { api, postJson, getPlayUrl, coverUrl } from "./lib/api";
+import { api, postJson, coverUrl, resolveStreamUrl, effectiveQuality, getSessionQuality, setSessionQuality, setLastStream, type StreamResult } from "./lib/api";
 import { parseLrc, type LyricLine } from "./lyric";
 
 export type Song = {
@@ -31,6 +31,7 @@ class Player {
   loved = new Set<string>(JSON.parse(localStorage.getItem(LS_KEY) ?? "[]"));
   lyrics: LyricLine[] = [];
   lyricState: "idle" | "loading" | "ok" | "none" = "idle";
+  loading = false; // 正在取链/缓冲（UI 画加载指示）
   expanded = false; // 正在播放页是否展开
   queueOpen = false;
   showTrans = localStorage.getItem(TRANS_KEY) !== "0"; // 歌词翻译显示开关（默认开）
@@ -38,6 +39,9 @@ class Player {
   private _muted = false;
   private listeners = new Set<Listener>();
   private lyricSeq = 0;
+  private playSeq = 0;   // startCurrent 竞态令牌：换曲即作废上一轮
+  private prefetch = new Map<string, Promise<StreamResult>>(); // mid+档 → 已协商流（单击预热，双击秒起播）
+  private pendingSeek = 0; // 换音质续播：新流 metadata 就绪后跳到旧进度
 
   constructor() {
     this.audio.preload = "auto";
@@ -47,10 +51,23 @@ class Player {
     this._muted = localStorage.getItem(MUTE_KEY) === "1";
     this.applyVolume();
     this.audio.addEventListener("timeupdate", () => this.notify());
-    this.audio.addEventListener("durationchange", () => this.notify());
+    this.audio.addEventListener("durationchange", () => this.consumePendingSeek());
+    this.audio.addEventListener("loadedmetadata", () => this.consumePendingSeek());
     this.audio.addEventListener("play", () => this.notify());
     this.audio.addEventListener("pause", () => this.notify());
     this.audio.addEventListener("ended", () => this.onEnded());
+    // 起播后仍需缓冲（网络卡顿）→ 保持加载指示；playing 事件说明已能出声
+    this.audio.addEventListener("waiting", () => { if (this.current) { this.loading = true; this.notify(); } });
+    this.audio.addEventListener("playing", () => { if (this.loading) { this.loading = false; this.error = ""; this.notify(); } });
+    this.audio.addEventListener("canplay", () => { if (this.loading && !this.audio.paused) { this.loading = false; this.notify(); } });
+    this.audio.addEventListener("stalled", () => { if (this.current && !this.audio.paused) { this.loading = true; this.notify(); } });
+    this.audio.addEventListener("error", () => {
+      // src 加载/解码失败（含 token 过期、上游断流）→ 可重试错误态，避免永久转圈
+      if (!this.current || !this.audio.src) return;
+      this.loading = false;
+      this.error = "音频流加载失败，可能已过期：再次点击播放或换一首";
+      this.notify();
+    });
   }
 
   on(fn: Listener) {
@@ -94,16 +111,16 @@ class Player {
     this.notify();
   }
 
-  /** 用新列表替换队列并从 i 播放（整队列替换：视图语义一致） */
-  async playList(songs: Song[], i = 0) {
+  /** 用新列表替换队列并从 i 播放（整队列替换：视图语义一致）。不 await：双击即刻打断切歌。 */
+  playList(songs: Song[], i = 0) {
     this.queue = songs.filter((s) => s?.mid);
     this.index = Math.max(0, Math.min(i, this.queue.length - 1));
-    await this.startCurrent();
+    void this.startCurrent();
   }
 
   enqueueNext(song: Song) {
     if (!song?.mid) return;
-    if (this.index < 0) { void this.playList([song], 0); return; }
+    if (this.index < 0) { this.playList([song], 0); return; }
     this.queue.splice(this.index + 1, 0, song);
     this.notify();
   }
@@ -114,22 +131,98 @@ class Player {
     void this.startCurrent();
   }
 
-  private async startCurrent() {
+  private consumePendingSeek() {
+    if (this.pendingSeek > 1 && isFinite(this.audio.duration) && this.audio.duration > this.pendingSeek) {
+      const t = this.pendingSeek;
+      this.pendingSeek = 0;
+      try { this.audio.currentTime = t; } catch { /* 稍后 timeupdate 再补 */ this.pendingSeek = t; }
+    } else if (this.pendingSeek > 1 && !isFinite(this.audio.duration)) {
+      /* 元数据未就绪：保留 pendingSeek 等下一次 durationchange/loadedmetadata */
+    } else {
+      this.pendingSeek = 0;
+    }
+    this.notify();
+  }
+
+  /** 立即打断当前取链/缓冲并跳转（双击新歌用：旧 audio.src 的排队 play promise 一并作废） */
+  private interrupt() {
+    this.playSeq++;
+    this.loading = false;
+    this.error = "";
+    this.pendingSeek = 0;
+    try { this.audio.pause(); } catch { /* noop */ }
+    this.audio.removeAttribute("src"); // 断开旧流下载（token 中继无 Range 请求即停）
+    try { this.audio.load(); } catch { /* noop */ } // 让旧 play() promise 以 AbortError 结束
+  }
+
+  private async startCurrent(resumeTo = 0) {
     const s = this.current;
+    this.interrupt();
     this.lyrics = [];
     this.lyricState = "idle";
+    if (!s) { this.notify(); return; }
+    this.loading = true;
     this.notify();
-    if (!s) return;
+    const seq = this.playSeq;
     try {
-      const url = await getPlayUrl(s);
-      if (this.current !== s) return; // 期间又切了歌
-      this.audio.src = url;
-      await this.audio.play();
+      const r = await this.getStream(s); // 命中单击预取的链接 → 直接跳过取链
+      if (seq !== this.playSeq || this.current !== s) return; // 期间又切了歌：本轮作废
+      setLastStream({ tier: r.tier, label: r.label, degraded: r.degraded });
+      this.applyStream(r.url);
+      if (resumeTo > 1) this.pendingSeek = resumeTo; // 换音质等场景：元数据就绪后从旧进度续播
+      try {
+        await this.audio.play();
+      } catch (pe: any) {
+        // AbortError = play 被更新的 load 打断。旧轮次直接弃；新轮次重试一次再放弃。
+        if (pe?.name === "AbortError") {
+          if (seq !== this.playSeq || this.current !== s) return;
+          await this.audio.play(); // load 竞态后的补播（此时资源选定应已稳定）
+        } else throw pe;
+      }
+      if (seq !== this.playSeq) return;
+      this.loading = false;
+      this.error = "";
     } catch (e: any) {
-      if (this.current === s) this.error = String(e?.message ?? e);
+      if (seq === this.playSeq && this.current === s) {
+        this.loading = false;
+        this.error = String(e?.message ?? e);
+      }
     }
-    this.fetchLyric(s);
+    if (seq === this.playSeq && this.current === s) this.fetchLyric(s); // 被作废的轮次不拉歌词，防竞态覆盖
     this.notify();
+  }
+
+  /** 挂 URL 到 audio。注意：src 赋值本身就会触发媒体 load 算法，绝不能再补 load()——
+   *  双 load 会把随后的 play() 以 AbortError 打断（"play() request was interrupted by a new load request"）。 */
+  private applyStream(url: string) {
+    this.audio.src = url;
+  }
+
+  // —— 单击预加载：行点击即后台协商播放链接（含上游取链+嗅探这两次慢 RTT），
+  //    双击起播时命中缓存即刻开流。单击新内容就清旧预取再预载新的（只留一份，释放内存/后端 token 表）。
+  private prefetchedMid = "";
+
+  prefetchSong(song: Song | undefined) {
+    if (!song?.mid) return;
+    const q = String(effectiveQuality());
+    if (song.mid === this.prefetchedMid && this.prefetch.has(q + "|" + song.mid)) return;
+    this.prefetch.clear(); // 清理旧预加载链接引用（token 由后端 TTL 回收；前端不再持有下载）
+    this.prefetchedMid = song.mid;
+    const key = q + "|" + song.mid;
+    const p = resolveStreamUrl(song, q as any);
+    p.catch(() => { if (this.prefetch.get(key) === p) this.prefetch.delete(key); });
+    this.prefetch.set(key, p);
+  }
+
+  /** getPlayUrl 语义的内部入口：预取命中用预取结果，否则现场协商 */
+  private async getStream(s: Song): Promise<StreamResult> {
+    const q = String(effectiveQuality());
+    const hit = this.prefetch.get(q + "|" + s.mid);
+    this.prefetch.clear(); // 用后即弃：链接是一次性上下文（会员/曲库状态可能变化），不跨切歌复用
+    if (hit) {
+      try { return await hit; } catch { /* 预取失败 → 现场重来 */ }
+    }
+    return resolveStreamUrl(s, q as any);
   }
 
   error = "";
@@ -154,8 +247,23 @@ class Player {
 
   toggle() {
     if (!this.current) return;
+    // 上轮取链/加载失败或流已断开 → 重新协商起播（重试语义）
+    if (this.error || (!this.audio.src && !this.loading)) { void this.startCurrent(this.audio.currentTime > 1 ? this.audio.currentTime : 0); return; }
+    if (this.loading) { this.interrupt(); this.notify(); return; } // 加载中再点 = 取消
     if (this.audio.paused) void this.audio.play().catch(() => {});
     else this.audio.pause();
+  }
+
+  // —— 播放条音质切换（会话级：不持久化；带 Fallback 协商，切档即从当前进度重挂流） ——
+  switchQuality(q: Parameters<typeof setSessionQuality>[0]) {
+    const cur = getSessionQuality();
+    if ((q ?? null) === cur && this.current && this.audio.src && !this.error) { this.notify(); return; } // 同档重复点：不打断
+    const at = this.audio.currentTime;
+    setSessionQuality(q);
+    this.prefetch.clear();
+    this.prefetchedMid = "";
+    if (this.current) void this.startCurrent(at > 1 ? at : 0);
+    else this.notify();
   }
 
   next(auto = false) {

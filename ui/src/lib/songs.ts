@@ -35,13 +35,19 @@ export function renderSongRows(box: HTMLElement, songs: any[], hooks: RowHooks =
       <button class="row-love${loved ? " on" : ""}" data-love aria-label="收藏">${loved ? "♥" : "♡"}</button>
       <span class="dur">${fmtTime(s.interval)}</span>`;
 
-    // 单击选中（视觉反馈留给 dblclick；单击不触发播放避免误触），双击播放整队列
+    // 单击 = 选中 + 后台预加载播放链接（释放旧预载）；双击 = 打断切歌立即播放
+    row.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest("[data-love],a")) return;
+      box.querySelectorAll(".row.sel").forEach((r) => r !== row && r.classList.remove("sel"));
+      row.classList.add("sel");
+      player.prefetchSong(s);
+    });
     row.addEventListener("dblclick", (e) => {
       if ((e.target as HTMLElement).closest("[data-love],a")) return;
       hooks.onPlay?.(s, i, songs);
     });
-    // 触屏/快速点按场景兜底：单击封面也直接播放
-    row.querySelector(".rthumb")!.addEventListener("click", () => hooks.onPlay?.(s, i, songs));
+    // 触屏/快速点按场景兜底：单击封面 = 选中 + 预加载（不直接起播，防误触；双击起播）
+    row.querySelector(".rthumb")!.addEventListener("click", () => player.prefetchSong(s));
     row.querySelector("[data-love]")!.addEventListener("click", (e) => {
       e.stopPropagation();
       player.toggleLove(s);

@@ -74,6 +74,20 @@ export function setQuality(q: Quality | "auto") {
   localStorage.setItem("quaver.quality.v1", q);
 }
 
+// —— 播放条音质切换：会话级覆盖（不写入 localStorage；重启回到设置页默认）。
+//    选择永远带 Fallback（auto_downgrade）：高档不可及就沿回退链降到最优可播档，绝不 403 卡死播放链路。
+let sessionQuality: Quality | "auto" | null = null;
+export const getSessionQuality = () => sessionQuality;
+export const setSessionQuality = (q: Quality | "auto" | null) => { sessionQuality = q; };
+/** 当前生效档位：播放条会话选择 > 设置页默认 */
+export const effectiveQuality = (): Quality | "auto" => sessionQuality ?? getQuality();
+
+/** 档位短标签（播放条音质胶囊用） */
+export const QUALITY_SHORT: Record<string, string> = {
+  auto: "自动", "128": "标准", "320": "HQ", "320ogg": "HQ·Ogg", flac: "SQ", "640ogg": "SQ·Ogg",
+  atmos2: "臻品", atmos51: "全景", master: "母带",
+};
+
 // —— Typhoeus 播放流：resolve 协商（会员门控 403 / 加密档 451 / 回退降级 degraded）→ token 中继 ——
 interface StreamResolved { token: string; path: string; tier: string; tier_label: string; degraded: boolean; mime: string; size: number }
 interface StreamTierView { id: string; label: string; rank: number; hi_res: boolean; locked?: boolean; requires?: number }
@@ -86,32 +100,52 @@ export async function getStreamTiers(force = false): Promise<StreamTiers> {
 }
 export const invalidateStreamTiers = () => (tiersCache = null);
 
-// 最近一次协商结果（播放条音质徽章数据源）
+// 最近一次「已应用」协商结果（播放条音质徽章数据源；由 player 在真正挂到 audio.src 时写入，
+// 预加载命中但未播放的不算）
 export interface LastStream { tier: string; label: string; degraded: boolean }
 let lastStream: LastStream | null = null;
 export const getLastStream = () => lastStream;
+export const setLastStream = (s: LastStream | null) => { lastStream = s; };
 
-export async function getPlayUrl(song: any, quality: Quality | "auto" = getQuality()): Promise<string> {
-  const mediaId: string = song.file?.media_mid ?? song.media_mid ?? song.mid;
-  let tier = quality as string;
-  let auto = false;
-  if (tier === "auto") {
-    const t = await getStreamTiers();
-    tier = t.max ?? "128";
-    auto = true;
-  }
+export interface StreamResult extends LastStream { url: string }
+
+const RESOLVE_TIMEOUT_MS = 12000; // 上游取链+嗅探偶发挂起：超时报错，让 UI 出可重试的错误态而不是永久转圈
+
+async function postResolve(body: { mid: string; media_mid: string; tier: string; auto: boolean }): Promise<StreamResolved> {
   try {
-    const r = await postJson<StreamResolved>("/stream/resolve", { mid: song.mid, media_mid: mediaId, tier, auto });
-    lastStream = { tier: r.tier, label: r.tier_label, degraded: r.degraded };
-    return "/api" + r.path;
+    return await api<StreamResolved>("/stream/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(RESOLVE_TIMEOUT_MS),
+    });
   } catch (e: any) {
-    // 自动模式 / 上游无资源(502) → 兜底回标准档保证可播；
-    // 用户显式选高档但会员不足(403) → 原样抛出，UI 提示开通会员（勿静默降档）
-    if ((auto || e?.status === 502) && tier !== "128") {
-      const r = await postJson<StreamResolved>("/stream/resolve", { mid: song.mid, media_mid: mediaId, tier: "128", auto: true });
-      lastStream = { tier: "128", label: "标准音质", degraded: true };
-      return "/api" + r.path;
+    if (e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError")) {
+      throw new ApiError(408, "取链超时（上游无响应），请重试或换音质");
     }
     throw e;
   }
+}
+
+/** 协商一条可播流：永远带 Fallback（auto_downgrade）——高档被会员/加密/无源挡住时沿回退链
+ *  降到最优可播明文档，degraded 标记实际降档；配合播放条音质胶囊（会话级、不持久化）。 */
+export async function resolveStreamUrl(song: any, quality: Quality | "auto" = effectiveQuality()): Promise<StreamResult> {
+  const mediaId: string = song.file?.media_mid ?? song.media_mid ?? song.mid;
+  let tier = quality as string;
+  if (tier === "auto") tier = (await getStreamTiers()).max ?? "128";
+  try {
+    const r = await postResolve({ mid: song.mid, media_mid: mediaId, tier, auto: true });
+    return { url: "/api" + r.path, tier: r.tier, label: r.tier_label, degraded: r.degraded };
+  } catch (e: any) {
+    // 目标档本身取不到（会员/加密在 auto 模式已被后端裁剪，走到这里多为无源/网络）→ 兜底标准档
+    if (tier !== "128") {
+      const r = await postResolve({ mid: song.mid, media_mid: mediaId, tier: "128", auto: true });
+      return { url: "/api" + r.path, tier: "128", label: "标准音质", degraded: true };
+    }
+    throw e;
+  }
+}
+
+export async function getPlayUrl(song: any, quality: Quality | "auto" = effectiveQuality()): Promise<string> {
+  return (await resolveStreamUrl(song, quality)).url;
 }

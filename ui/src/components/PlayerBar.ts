@@ -4,7 +4,7 @@
 // 进度：整个 Bar 按下去即可拖拽 seek（拖中圆点/时间跟手，松手才真正提交），顶边细线只是视觉指示
 // 音量：浮窗形式 —— 悬停/点击静音按钮弹出玻璃小窗，静音图标 + 滑杆 + 读数一体
 import { player } from "../player";
-import { coverUrl, getLastStream } from "../lib/api";
+import { coverUrl, getLastStream, getStreamTiers, getSessionQuality, effectiveQuality, QUALITY_SHORT, QUALITIES, type Quality } from "../lib/api";
 import { fmtDur } from "../lyric";
 import { icons } from "../lib/icons";
 import { extractCoverColor, toBarColors } from "../lib/color";
@@ -33,6 +33,7 @@ export function PlayerBar(): HTMLElement {
       <span class="pb-time" id="pb-time">0:00 / 0:00</span>
       <button class="pb-btn pb-ghost" id="pb-mute" aria-label="音量 / 静音"></button>
       <button class="pb-btn pb-ghost" id="pb-loop" aria-label="循环模式"></button>
+      <button class="pb-q" id="pb-quality" title="音质（本会话生效，不保存；高档自动回退可播档）"></button>
       <button class="pb-btn pb-ghost" id="pb-love" aria-label="收藏">${icons.heart}</button>
       <button class="pb-btn pb-ghost" id="pb-queue" aria-label="播放队列">${icons.queue}</button>
     </div>
@@ -42,6 +43,8 @@ export function PlayerBar(): HTMLElement {
       <input class="pb-vol" id="pb-vol" type="range" min="0" max="100" step="1" value="80" aria-label="音量" />
       <span class="pb-volnum" id="pb-volnum">80%</span>
     </div>
+    <!-- 音质浮窗：会话级档位（不持久化），永远带 Fallback 协商 -->
+    <div class="pb-qpop" id="pb-qpop" role="menu" aria-label="音质"></div>
   `;
 
   const $ = <T extends HTMLElement>(id: string) => el.querySelector<T>("#" + id)!;
@@ -83,7 +86,67 @@ export function PlayerBar(): HTMLElement {
   document.addEventListener("pointerdown", (e) => {
     const t = e.target as HTMLElement;
     if (!el.contains(t) || !t.closest("#pb-mute, #pb-volpop")) el.classList.remove("vol-open");
+    if (!el.contains(t) || !t.closest("#pb-quality, #pb-qpop")) el.classList.remove("q-open");
   });
+
+  // —— 音质切换（音频控制区右侧、收藏红心之前）——
+  // 先拉 /stream/tiers 拿到会员可及档位，再渲染胶囊与浮窗（未就绪时画占位，避免闪出错误档位）。
+  const qBtn = $<HTMLButtonElement>("pb-quality"), qPop = $("pb-qpop");
+  let tierList: { id: string; label: string; locked?: number | boolean }[] = [];
+  let qReady = false;
+  function paintQ() {
+    if (!qReady) { qBtn.textContent = "…"; qBtn.disabled = true; return; }
+    qBtn.disabled = false;
+    const ls = getLastStream();
+    const want = getSessionQuality();
+    // 有已应用的流 → 实际档位（↓=被回退降档）；否则显示当前生效选择（未选=设置页默认）
+    const label = player.current && ls
+      ? (ls.degraded ? "↓" : "") + (QUALITY_SHORT[ls.tier] ?? ls.label)
+      : (QUALITY_SHORT[want ?? effectiveQuality()] ?? "音质");
+    qBtn.textContent = label;
+    qBtn.title = want
+      ? `音质：${label}（本会话选择，不保存；关窗后回到设置页默认）`
+      : "音质（点此切换，仅本会话生效不保存；高档不可及时自动回退到可播档）";
+    qBtn.classList.toggle("active", !!want);
+    if (el.classList.contains("q-open")) syncSel();
+  }
+  const cur = () => effectiveQuality();
+  const syncSel = () => qPop.querySelectorAll<HTMLElement>(".qp-q")
+    .forEach((x) => x.classList.toggle("sel", x.dataset.q === cur()));
+  function buildQPop() {
+    qPop.innerHTML = "";
+    const item = (id: string, label: string, note = "") => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "qp-q" + (cur() === id ? " sel" : "");
+      b.dataset.q = id;
+      b.innerHTML = `<span>${label}</span>${note ? `<i class="muted">${note}</i>` : ""}`;
+      b.onclick = () => {
+        player.switchQuality(id as Quality | "auto");
+        el.classList.remove("q-open");
+      };
+      qPop.append(b);
+    };
+    item("auto", "自动", "最高可播");
+    for (const t of tierList) item(t.id, t.label, t.locked ? "🔒 自动回退" : "");
+  }
+  async function initQuality() {
+    try {
+      const t = await getStreamTiers();
+      tierList = t.all_tiers;
+    } catch {
+      tierList = Object.entries(QUALITIES).map(([id, label]) => ({ id, label }));
+    }
+    qReady = true;
+    buildQPop();
+    paintQ();
+  }
+  qBtn.onclick = () => {
+    if (!qReady) return void initQuality();
+    const open = el.classList.toggle("q-open");
+    if (open) syncSel();
+  };
+  void initQuality();
 
   // 滚轮在 Bar 上 = 微调音量
   el.addEventListener("wheel", (e) => {
@@ -104,7 +167,7 @@ export function PlayerBar(): HTMLElement {
   };
   el.addEventListener("pointerdown", (e) => {
     const t = e.target as HTMLElement;
-    if (t.closest("button, input, .pb-volpop")) return; // 控件区不吞点击
+    if (t.closest("button, input, .pb-volpop, .pb-qpop")) return; // 控件区不吞点击
     if (!player.duration) return;
     dragging = true;
     el.classList.add("scrubbing");
@@ -168,7 +231,20 @@ export function PlayerBar(): HTMLElement {
     const pic = s ? coverUrl(s, 150) : "";
     cover.innerHTML = pic ? `<img src="${pic}" alt=""/>` : "";
     void paintTint(pic);
-    play.innerHTML = player.playing ? icons.pause : icons.play;
+    // 中央按钮三态：取链/缓冲=spinner（点击=取消）；出错=重试图标；常规=播放/暂停
+    el.classList.toggle("loading", player.loading);
+    if (player.loading) play.innerHTML = icons.spinner;
+    else if (player.error) play.innerHTML = icons.retry;
+    else play.innerHTML = player.playing ? icons.pause : icons.play;
+    play.setAttribute("title", player.loading ? "加载中，点击取消" : player.error ? "加载失败，点击重试" : "播放/暂停");
+    if (player.error && !player.loading) {
+      const e = document.createElement("i");
+      e.className = "pb-err";
+      e.textContent = player.error;
+      sub.innerHTML = "";
+      sub.append(e);
+    }
+    paintQ();
     loop.innerHTML = player.mode === "off" ? icons.loopOff : player.mode === "all" ? icons.loopAll : icons.loopOne;
     loop.classList.toggle("on", player.mode !== "off");
     love.innerHTML = s && player.loved.has(s.mid) ? icons.heartFill : icons.heart;

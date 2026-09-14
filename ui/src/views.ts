@@ -1,6 +1,6 @@
 // Quaver — 路由视图表（仅内容区渲染；播放器/侧栏常驻）
 // 视图函数: async (root, query) => cleanup?
-import { api, upPic, getQuality, setQuality, getStreamTiers, identityBadges } from "./lib/api";
+import { api, upPic, getQuality, setQuality, setSessionQuality, getStreamTiers, identityBadges } from "./lib/api";
 import { renderSongRows, loadLiked, type RowHooks } from "./lib/songs";
 import { player } from "./player";
 import {
@@ -261,7 +261,7 @@ async function settingsView(root: HTMLElement) {
       <h2>关于</h2>
       <div class="about-img"><img src="/quaver-icon.svg" width=60 alt="Quaver Icon">
       <h3> Quaver Music </h3>
-      <h4> 又一个基于 Electron + Vite + C++ 的 QQ 音乐第三方客户端</h4>
+      <h4> 又一个基于 Electron + Vite 前端 + TS/Py 混合后端的 QQ 音乐第三方客户端</h4>
       <small> Version: Prototype </small>
     </section>`
     ;
@@ -300,7 +300,12 @@ async function settingsView(root: HTMLElement) {
   const syncQ = () => syncSel(qBox, "q", getQuality());
   const bindQ = () => {
     qBox.querySelectorAll<HTMLButtonElement>("[data-q]").forEach((b) => {
-      if (!b.disabled) b.onclick = () => { setQuality(b.dataset.q as any); syncQ(); };
+      if (!b.disabled) b.onclick = () => {
+        setQuality(b.dataset.q as any);
+        setSessionQuality(null); // 播放条会话覆盖让位给新的默认档（新档自下一首起生效）
+        syncQ();
+        player.notifyPublic();
+      };
     });
   };
   bindQ(); syncQ();
