@@ -178,6 +178,8 @@ jobs:
         run: |
           ls -la out/
           chmod +x out/quaver-server-* out/Quaver-*.AppImage 2>/dev/null || true
+          # -R 显式指定仓库：此 job 无 checkout，gh 靠 git 推断仓库会 fatal
           gh release create "$GITHUB_REF_NAME" \
+            -R "$GITHUB_REPOSITORY" \
             --generate-notes \
             out/quaver-server-* out/Quaver-*.AppImage
