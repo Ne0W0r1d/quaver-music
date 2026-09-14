@@ -36,9 +36,11 @@ jobs:
         with:
           submodules: false
 
-      # 只初始化构建真正需要的子模块（uv 的 path 依赖），不去拉 Typhoeus
-      - name: Init QQMusicApi submodule
-        run: git submodule update --init --depth 1 vendor/QQMusicApi
+      # 构建需要两个 path 依赖 submodule：QQMusicApi（SDK）+ Typhoeus（播放后端核心）
+      - name: Init submodules
+        run: |
+          git submodule update --init --depth 1 vendor/QQMusicApi
+          git submodule update --init --depth 1 vendor/Typhoeus
 
       - uses: astral-sh/setup-uv@v10.1.0
 
