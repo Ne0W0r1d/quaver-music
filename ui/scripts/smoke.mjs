@@ -84,11 +84,12 @@ await step("login: 二维码 img 出图", async () => {
 await shot("04-login");
 
 // 6) 设置页
-await step("settings: 音质选择器存在", async () => {
-  await page.evaluate(() => { location.hash = "#/settings"; });
-  await sleep(800);
-  const v = await page.$eval("#quality", (s) => s.value);
-  console.log(`  quality=${v}`);
+await step("settings: 音质档位卡存在", async () => {
+  await page.evaluate(() => { location.hash = "#/settings" });
+  await sleep(2500);
+  const n = await page.$$eval("#quality-grid [data-q]", (els) => els.length);
+  if (n < 2) throw new Error(`only ${n} tier cards`);
+  console.log(`  tiers=${n}`);
 });
 await shot("05-settings");
 

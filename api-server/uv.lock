@@ -614,7 +614,7 @@ wheels = [
 
 [[package]]
 name = "qqmusic-api-python"
-source = { directory = "../vendor/QQMusicApi" }
+source = { editable = "../vendor/QQMusicApi" }
 dependencies = [
     { name = "anyio" },
     { name = "cryptography" },
@@ -693,6 +693,7 @@ dependencies = [
     { name = "loguru" },
     { name = "pydantic" },
     { name = "qqmusic-api-python" },
+    { name = "quaver-typhoeus" },
     { name = "uvicorn" },
 ]
 
@@ -701,9 +702,22 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.136" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "pydantic", specifier = ">=2.13" },
-    { name = "qqmusic-api-python", directory = "../vendor/QQMusicApi" },
+    { name = "qqmusic-api-python", editable = "../vendor/QQMusicApi" },
+    { name = "quaver-typhoeus", editable = "../vendor/Typhoeus" },
     { name = "uvicorn", specifier = ">=0.46" },
 ]
+
+[[package]]
+name = "quaver-typhoeus"
+version = "0.1.0"
+source = { editable = "../vendor/Typhoeus" }
+
+[package.metadata]
+requires-dist = [
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "qqmusic-api-python", marker = "extra == 'sdk'" },
+]
+provides-extras = ["sdk", "dev"]
 
 [[package]]
 name = "starlette"

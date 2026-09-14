@@ -14,6 +14,7 @@ import os
 import stat
 import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from qqmusic_api import Client, Credential
@@ -86,6 +87,18 @@ class Session:
         DEVICE_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._lock = threading.RLock()
         self.client = Client(credential=_load_credential_from_disk(), device_path=str(DEVICE_PATH))
+        self._listeners: list[Callable[[], None]] = []
+
+    def add_change_listener(self, cb) -> None:
+        """登录态变更回调（adopt/logout 后触发）。供 Typhoeus 等下游清缓存。"""
+        self._listeners.append(cb)
+
+    def _notify(self) -> None:
+        for cb in self._listeners:
+            try:
+                cb()
+            except Exception:
+                logger.warning("session 变更监听回调失败", exc_info=True)
 
     @property
     def credential(self) -> Credential:
@@ -107,6 +120,7 @@ class Session:
             self.client.credential = credential
             save_credential(credential)
             logger.info("登录凭证已更新 musicid=%s", credential.musicid)
+            self._notify()
 
     async def logout(self) -> None:
         with self._lock:
@@ -117,6 +131,7 @@ class Session:
                     logger.warning("上游登出失败，仅清除本地凭证", exc_info=True)
             clear_credential()
             self.client.credential = Credential()
+            self._notify()
 
 
 session = Session()

@@ -86,6 +86,8 @@ export function apiRelay(): Connect.NextHandleFunction {
     const headers = new Headers();
     const ct = req.headers["content-type"];
     if (ct) headers.set("content-type", ct);
+    const range = req.headers["range"];
+    if (range) headers.set("range", range); // 播放流 Range 中继必须透传
 
     try {
       const upstream = await fetch(target, {
@@ -94,6 +96,17 @@ export function apiRelay(): Connect.NextHandleFunction {
         body: (await readBody(req)) as BodyInit | undefined,
         redirect: "manual",
       });
+      // 播放流（/api/stream/<token>）：流式管道，绝不整段缓冲（边下边播 + 省内存）
+      if (/^stream\/[^/]+$/.test(path) && upstream.body) {
+        res.statusCode = upstream.status;
+        upstream.headers.forEach((v, k) => {
+          if (k === "transfer-encoding" || k === "content-encoding" || k === "connection") return;
+          res.appendHeader(k, v);
+        });
+        const { Readable } = await import("node:stream");
+        Readable.fromWeb(upstream.body as any).pipe(res);
+        return;
+      }
       res.statusCode = upstream.status;
       upstream.headers.forEach((v, k) => {
         // hop-by-hop 与内容编码头交给运行时重算，透传会双重编码

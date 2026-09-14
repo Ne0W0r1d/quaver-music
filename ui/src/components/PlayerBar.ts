@@ -4,7 +4,7 @@
 // 进度：整个 Bar 按下去即可拖拽 seek（拖中圆点/时间跟手，松手才真正提交），顶边细线只是视觉指示
 // 音量：浮窗形式 —— 悬停/点击静音按钮弹出玻璃小窗，静音图标 + 滑杆 + 读数一体
 import { player } from "../player";
-import { coverUrl } from "../lib/api";
+import { coverUrl, getLastStream } from "../lib/api";
 import { fmtDur } from "../lyric";
 import { icons } from "../lib/icons";
 import { extractCoverColor, toBarColors } from "../lib/color";
@@ -159,7 +159,12 @@ export function PlayerBar(): HTMLElement {
   player.on(() => {
     const s = player.current;
     title.textContent = s?.name ?? "未在播放";
-    sub.textContent = s ? (s.singer ?? []).map((x) => x.name).join(" / ") : "点一首歌试试";
+    const ls = getLastStream();
+    const tierBadge = s && ls && ls.tier !== "128"
+      ? ` <i class="badge green q-badge">${ls.degraded ? "→" : ""}${ls.label}</i>` : "";
+    sub.innerHTML = s
+      ? ((s.singer ?? []).map((x) => x.name).join(" / ") + tierBadge)
+      : "点一首歌试试";
     const pic = s ? coverUrl(s, 150) : "";
     cover.innerHTML = pic ? `<img src="${pic}" alt=""/>` : "";
     void paintTint(pic);

@@ -52,28 +52,66 @@ export function identityBadges(me: any, vip: any): string {
   return badges.join("");
 }
 
-// 音质档位 = sidecar file_type 整数（映射表见 api-server app.py FILE_TYPES）
-export const QUALITIES: Record<string, number> = { "128": 13, "320": 12, flac: 7 };
+// 音质档位 = Typhoeus TierId（vendor/Typhoeus/typhoeus/quality.py；后端按会员门控+回退协商）
+// 旧整数表（128/320/flac → file_type）随 /song/urls 直连路径保留兼容，播放主链路已走 /stream/*。
+export const QUALITIES = {
+  "128": "标准音质",
+  "320": "高品质 HQ",
+  flac: "无损 SQ",
+  "640ogg": "无损 SQ (OGG)",
+  atmos2: "臻品音质",
+  atmos51: "臻品全景声",
+  master: "臻品母带",
+} as const;
 export type Quality = keyof typeof QUALITIES;
 
-export function getQuality(): Quality {
+export function getQuality(): Quality | "auto" {
   const q = localStorage.getItem("quaver.quality.v1");
-  return q === "320" || q === "flac" ? q : "128";
+  if (q === "auto" || (q && q in QUALITIES)) return q as Quality | "auto";
+  return "128";
 }
-export function setQuality(q: Quality) {
+export function setQuality(q: Quality | "auto") {
   localStorage.setItem("quaver.quality.v1", q);
 }
 
-interface SongUrlItem { mid: string; url: string; result: number; filename: string }
+// —— Typhoeus 播放流：resolve 协商（会员门控 403 / 加密档 451 / 回退降级 degraded）→ token 中继 ——
+interface StreamResolved { token: string; path: string; tier: string; tier_label: string; degraded: boolean; mime: string; size: number }
+interface StreamTierView { id: string; label: string; rank: number; hi_res: boolean; locked?: boolean; requires?: number }
+interface StreamTiers { membership: number; membership_label: string; tiers: StreamTierView[]; all_tiers: StreamTierView[]; max: string | null }
 
-export async function getPlayUrl(song: any, quality: Quality = getQuality()): Promise<string> {
-  const mediaId: string = song.file?.media_mid ?? song.mid;
-  const code = QUALITIES[quality] ?? 13;
-  const data = await postJson<SongUrlItem[] | { items: SongUrlItem[] }>("/song/urls", {
-    file_info: [{ mid: song.mid, media_mid: mediaId }],
-    file_type: code,
-  });
-  const item = (Array.isArray(data) ? data : data.items)?.[0];
-  if (!item?.url) throw new Error(item?.result ? `取链接失败 (result=${item.result})` : "暂无播放链接");
-  return item.url;
+let tiersCache: StreamTiers | null = null;
+export async function getStreamTiers(force = false): Promise<StreamTiers> {
+  if (!tiersCache || force) tiersCache = await api<StreamTiers>("/stream/tiers");
+  return tiersCache;
+}
+export const invalidateStreamTiers = () => (tiersCache = null);
+
+// 最近一次协商结果（播放条音质徽章数据源）
+export interface LastStream { tier: string; label: string; degraded: boolean }
+let lastStream: LastStream | null = null;
+export const getLastStream = () => lastStream;
+
+export async function getPlayUrl(song: any, quality: Quality | "auto" = getQuality()): Promise<string> {
+  const mediaId: string = song.file?.media_mid ?? song.media_mid ?? song.mid;
+  let tier = quality as string;
+  let auto = false;
+  if (tier === "auto") {
+    const t = await getStreamTiers();
+    tier = t.max ?? "128";
+    auto = true;
+  }
+  try {
+    const r = await postJson<StreamResolved>("/stream/resolve", { mid: song.mid, media_mid: mediaId, tier, auto });
+    lastStream = { tier: r.tier, label: r.tier_label, degraded: r.degraded };
+    return "/api" + r.path;
+  } catch (e: any) {
+    // 自动模式 / 上游无资源(502) → 兜底回标准档保证可播；
+    // 用户显式选高档但会员不足(403) → 原样抛出，UI 提示开通会员（勿静默降档）
+    if ((auto || e?.status === 502) && tier !== "128") {
+      const r = await postJson<StreamResolved>("/stream/resolve", { mid: song.mid, media_mid: mediaId, tier: "128", auto: true });
+      lastStream = { tier: "128", label: "标准音质", degraded: true };
+      return "/api" + r.path;
+    }
+    throw e;
+  }
 }
