@@ -1,5 +1,8 @@
 {
   "name": "quaver-ui",
+  "productName": "Quaver",
+  "description": "Quaver Music — 又一个第三方 QQ 音乐客户端（Electron + Python sidecar）",
+  "author": "ne0w0r1d",
   "private": true,
   "version": "0.0.1",
   "type": "module",
@@ -11,11 +14,38 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "app": "npm run build && electron ."
+    "app": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --linux AppImage"
+  },
+  "build": {
+    "appId": "cn.ne0w0r1d.quaver",
+    "productName": "Quaver",
+    "directories": { "output": "release" },
+    "executableName": "quaver",
+    "artifactName": "Quaver-${version}-${arch}.${ext}",
+    "asar": true,
+    "files": [
+      "electron/**",
+      "dist/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../api-server/dist-bin/quaver-server",
+        "to": "bin/quaver-server"
+      }
+    ],
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Audio",
+      "icon": "build-res/icon.png",
+      "maintainer": "ne0w0r1d <ne0w0r1d@users.noreply.github.com>"
+    }
   },
   "devDependencies": {
     "@types/node": "^22.20.2",
     "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
     "puppeteer-core": "^25.10.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0"
