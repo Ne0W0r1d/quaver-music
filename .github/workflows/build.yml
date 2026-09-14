@@ -142,8 +142,9 @@ jobs:
 
       - name: electron-builder AppImage
         working-directory: ui
-        env:
-          GH_TOKEN: ${{ github.token }}
+        # 注意：不给这一步设 GH_TOKEN——有 token 时 builder 会自动推导 GitHub publish
+        # 配置，repository 缺失时 updateInfoBuilder 直接崩（reading 'channel'）。
+        # --publish never 下它本来也不需要。
         run: |
           ARGS="--linux AppImage --${{ matrix.electron_arch }} --publish never"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
