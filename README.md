@@ -18,6 +18,8 @@ Quaver Music，是一款 QQ 音乐的第三方客户端，其目的是为了让 
 
 > [!CAUTION]
 > 真爱音乐，尊重正版，音乐平台不易，该应用**不提供盗版 QQ 音乐服务！**
+>
+> 与此同时，这个软件目前全权是拷打 QWen 3.8 Flash 诞生的，按原样提供，own ur risk！
 
 # 契机
 
@@ -52,15 +54,15 @@ z：修补版本号
 - [x] 基础 UI 建设（播放页主页）
 - [x] 使用 WebAPI，完成基础的后端数据获取（换成 Python API 了）
 - [ ] 打包 CI
-- [ ] 清理 Bugs
 
 现在的基础 UI 设计使用了 Pixso，感谢万兴开发的 Pixso，我大学时期就在用的 UI/UX 设计工具（虽然当时是上课）！
 
 在这三个完成后，将进入 Stable 阶段的开发，在此阶段，我需要完成以下工作
 
-- [ ] MPRIS 支持
-- [ ] XDG Desktop Portal Inhibit 协议与 Logind 直连睡眠抑制器实现
-- [ ] 使用 PythonAPI 完善后端功能
+- [ ] 代号为 `Typhoeus` 的统一后端（集合现在的 Quaver SAL，抽象部分 API 能力 + 自实现播放后端，使用 AGPLv3 协议开源，在考虑因此学习 Zig 还是重新开始 Rust 还是复习 C++ ）
+- [ ] MPRIS 支持（使用 `Typhoeus` 后端实现）
+- [ ] XDG Desktop Portal Inhibit 协议与 Logind 直连睡眠抑制器实现（使用 `Typhoeus` 后端实现） 
+- [ ] 使用 PythonAPI 完善后端功能（使用 `Typhoeus` 后端抽象实现）
 - [ ] 清理 Bugs
 
 并在未来的 FEP 版本中，加入呼声较高的功能，或未完成实现的功能。

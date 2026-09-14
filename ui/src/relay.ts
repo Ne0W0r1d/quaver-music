@@ -4,6 +4,8 @@
 // token 完全不进浏览器侧——所以这里只剩纯透传 + 封面代理。
 import type { Connect } from "vite";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 const SIDECAR = process.env.QUAVER_API ?? "http://127.0.0.1:3200";
 
@@ -51,12 +53,31 @@ async function proxyImage(u: string | null, res: ServerResponse) {
   }
 }
 
+// 调试：日志页面数据源。Electron 壳层写 ui/electron-dev.log（见 electron/main.mjs），
+// 这里以纯文本给出尾部 N 行；文件不存在（纯浏览器 dev）返回 404 JSON，前端显示占位提示。
+function serveLog(res: ServerResponse, tail: number) {
+  const file = join(import.meta.dirname ?? ".", "..", "electron-dev.log");
+  if (!existsSync(file)) {
+    res.statusCode = 404;
+    return res.end(JSON.stringify({ code: -1, msg: "electron-dev.log 不存在" }));
+  }
+  const size = statSync(file).size;
+  const buf = readFileSync(file);
+  const text = size > 2_000_000 ? buf.subarray(size - 2_000_000).toString("utf8") : buf.toString("utf8");
+  const lines = text.split("\n");
+  res.statusCode = 200;
+  res.setHeader("content-type", "text/plain; charset=utf-8");
+  res.setHeader("cache-control", "no-store");
+  res.end(lines.slice(-Math.max(1, Math.min(5000, tail))).join("\n"));
+}
+
 export function apiRelay(): Connect.NextHandleFunction {
   return async (req, res) => {
     const url = new URL(req.url ?? "/", "http://local"); // req.url 已剥掉挂载前缀 /api
     const path = url.pathname.replace(/^\//, "");
 
     if (path === "img") return proxyImage(url.searchParams.get("u"), res);
+    if (path === "log") return serveLog(res, parseInt(url.searchParams.get("tail") ?? "800", 10) || 800);
 
     const target = new URL(SIDECAR);
     target.pathname = "/" + path;

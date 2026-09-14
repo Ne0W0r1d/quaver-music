@@ -3,6 +3,10 @@
 import { api, upPic, getQuality, setQuality, identityBadges } from "./lib/api";
 import { renderSongRows, loadLiked, type RowHooks } from "./lib/songs";
 import { player } from "./player";
+import {
+  getTheme, setTheme, getDecor, setDecor, getUiFont, setUiFont, getLyricFont, setLyricFont,
+  getDecode, setDecode, FONT_LABELS,
+} from "./lib/prefs";
 
 const h = (tag: string, cls: string, html = "") => {
   const el = document.createElement(tag);
@@ -192,25 +196,146 @@ async function likedView(root: HTMLElement) {
   }
 }
 
+// —— 设置页（对齐设计稿：外观设置 / 播放设置 / 调试 三区；不触碰侧栏与播放条） ——
 async function settingsView(root: HTMLElement) {
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  const fontOptions = Object.entries(FONT_LABELS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
+  const decodeRow = (name: string, label: string, disabled = false) =>
+    `<label><input type="radio" name="decode" value="${name}"${disabled ? " disabled" : ""}/>${label}${disabled ? ` <span class="muted soon">敬请期待</span>` : ""}</label>`;
+
   root.append(h("h1", "page-title", "设置"));
   const wrap = h("div", "set-view");
   wrap.innerHTML = `
-    <div class="set-row"><span>播放音质</span>
-      <select id="quality" aria-label="播放音质">
-        <option value="128">SD（标准 128k）</option>
-        <option value="320">HQ（高品质 320k）</option>
-        <option value="flac">SQ（无损 FLAC）</option>
-      </select></div>
-    <p class="muted">该选项将研究于 Ellen Chisa 分支启用第二期 Spike 探针试验评估，先启用 SD、HQ、SQ 三挡设置</p>
-    <div class="set-row" id="sidecar-state"><span>Sidecar 状态</span><span class="muted">检测中…</span></div>`;
-  root.append(wrap);
-  const sel = wrap.querySelector<HTMLSelectElement>("#quality")!;
-  sel.value = getQuality();
-  sel.onchange = () => setQuality(sel.value as any);
+    <section class="set-sec">
+      <h2>外观设置</h2>
+      <p class="muted set-note">在这里，可以设置 Quaver 的客户端外观</p>
 
-  const st = wrap.querySelector<HTMLElement>("#sidecar-state .muted")!;
-  api("/").then(() => (st.textContent = "✅ 正常（Python · QQMusicApi）")).catch((e) => (st.textContent = "❌ " + e.message));
+      <div class="set-sub">外观模式</div>
+      <div class="opt-cards" id="theme-cards">
+        <button class="opt-card" data-opt="system" type="button"><span class="sw sw-system"></span>跟随系统</button>
+        <button class="opt-card" data-opt="light" type="button"><span class="sw sw-light"></span>明镜白</button>
+        <button class="opt-card" data-opt="dark" type="button"><span class="sw sw-dark"></span>玄幻黑</button>
+      </div>
+
+      <div class="set-sub">窗口装饰 <span class="muted set-subnote">- 仅桌面端生效，切换后自动重建窗口</span></div>
+      <div class="opt-cards" id="decor-cards">
+        <button class="opt-card" data-opt="csd" type="button">自绘标题栏（CSD）</button>
+        <button class="opt-card" data-opt="ssd" type="button">系统标题栏（SSD）</button>
+      </div>
+
+      <div class="set-sub">字体设置</div>
+      <label class="set-field"><span>界面字体</span>
+        <select id="font-ui">${fontOptions}</select></label>
+      <label class="set-field"><span>歌词字体</span>
+        <select id="font-lyric">${fontOptions}</select></label>
+    </section>
+
+    <section class="set-sec">
+      <h2>播放设置</h2>
+      <p class="muted set-note">在这里，可以设置 Quaver 的播放设置</p>
+
+      <div class="set-sub">后端模式</div>
+      <p class="muted set-note">如果播放音频出现问题可在这设置</p>
+      <div id="backend-device"${isMac ? " hidden" : ""}>
+        <label class="set-field"><span>音频后端/设备</span>
+          <select id="audio-backend" disabled><option>系统默认</option></select></label>
+        <p class="muted set-hint">Windows 默认 WASAPI，Linux 默认 PipeWire，macOS 走 CoreAudio 不显示该设置。当前播放管线为 Chromium Web Audio，接入原生后端后这里会列出真实设备。</p>
+      </div>
+      <div class="set-sub set-sub2">解码后端 <span class="muted set-subnote">- 默认 FFmpeg，可选 MPV/Blink</span></div>
+      <div class="opt-radios" id="decode-radios">
+        ${decodeRow("FFmpeg", "FFmpeg")}${decodeRow("MPV", "MPV", true)}${decodeRow("Blink", "Blink", true)}
+      </div>
+
+      <div class="set-sub">默认音质</div>
+      <div class="opt-cards" id="quality-grid">
+        <button class="opt-card q" data-q="128" type="button">标准音质</button>
+        <button class="opt-card q" data-q="320" type="button">高品质 HQ</button>
+        <button class="opt-card q" data-q="flac" type="button">无损 SQ</button>
+        <button class="opt-card q" type="button" disabled>High-res 无损</button>
+        <button class="opt-card q" type="button" disabled>臻品母带</button>
+        <button class="opt-card q" type="button" disabled>臻品全景声</button>
+        <button class="opt-card q" type="button" disabled>臻品音质</button>
+      </div>
+      <p class="muted set-hint">标准 / HQ / SQ 即时生效（下一首起按新音质取链接）；High-res 及以上等更换后端 API 后实现。</p>
+    </section>
+
+    <section class="set-sec">
+      <h2>调试</h2>
+      <div class="set-debug"><button class="ghost-btn" id="open-log" type="button">打开日志页面</button></div>
+    </section>
+    <section class="set-sec">
+      <h2>关于</h2>
+      <div class="about-img"><img src="/quaver-icon.svg" width=60 alt="Quaver Icon">
+      <h3> Quaver Music </h3>
+      <h4> 又一个基于 Electron + Vite + C++ 的 QQ 音乐第三方客户端</h4>
+      <small> Version: Prototype </small>
+    </section>`
+    ;
+
+  root.append(wrap);
+
+  const syncSel = (box: HTMLElement, attr: "opt" | "q", active: string) =>
+    box.querySelectorAll<HTMLElement>("[data-" + attr + "]").forEach((b) => b.classList.toggle("sel", b.dataset[attr] === active));
+
+  // 外观模式：跟随系统 / 明镜白 / 玄幻黑（prefs 写 html[data-theme]，style.css 响应）
+  const themeBox = wrap.querySelector<HTMLElement>("#theme-cards")!;
+  const syncTheme = () => syncSel(themeBox, "opt", getTheme());
+  themeBox.querySelectorAll<HTMLElement>("[data-opt]").forEach((b) => { b.onclick = () => { setTheme(b.dataset.opt as any); syncTheme(); }; });
+  syncTheme();
+
+  // 窗口装饰：CSD（自绘悬浮胶囊）/ SSD（系统标题栏）。Electron 桥重建窗口；浏览器仅隐藏胶囊。
+  const decorBox = wrap.querySelector<HTMLElement>("#decor-cards")!;
+  const syncDecor = () => syncSel(decorBox, "opt", getDecor());
+  decorBox.querySelectorAll<HTMLElement>("[data-opt]").forEach((b) => { b.onclick = () => { setDecor(b.dataset.opt as any); syncDecor(); }; });
+  syncDecor();
+
+  // 字体：界面 / 歌词两族，写 CSS 变量即时生效
+  const fu = wrap.querySelector<HTMLSelectElement>("#font-ui")!;
+  const fl = wrap.querySelector<HTMLSelectElement>("#font-lyric")!;
+  fu.value = getUiFont(); fu.onchange = () => setUiFont(fu.value);
+  fl.value = getLyricFont(); fl.onchange = () => setLyricFont(fl.value);
+
+  // 解码后端：当前管线只有 FFmpeg（Web Audio 解码）可用；选择持久化，多后端接入后生效
+  const radios = wrap.querySelectorAll<HTMLInputElement>("#decode-radios input");
+  const decode = getDecode();
+  radios.forEach((r) => { r.checked = r.value === decode; r.onchange = () => { if (r.checked) setDecode(r.value); }; });
+
+  // 默认音质：复用现有 QUALITIES 三挡（128/320/flac），更高档设计稿即标「等更换后端 API 后实现」
+  const qBox = wrap.querySelector<HTMLElement>("#quality-grid")!;
+  const syncQ = () => syncSel(qBox, "q", getQuality());
+  qBox.querySelectorAll<HTMLElement>("[data-q]").forEach((b) => { b.onclick = () => { setQuality(b.dataset.q as any); syncQ(); }; });
+  syncQ();
+
+  // 调试：日志页面（壳层把 ui/electron-dev.log 经 /api/log 尾部暴露为纯文本，见 relay.ts）
+  wrap.querySelector<HTMLElement>("#open-log")!.onclick = () => (location.hash = "#/log");
+}
+
+// —— 调试：日志页面（壳层 electron-dev.log 尾部；由 relay.ts /api/log 提供） ——
+async function logView(root: HTMLElement) {
+  const bar = h("div", "log-bar");
+  const pre = h("pre", "log-pre", `<span class="muted">加载中…</span>`);
+  const back = h("button", "ghost-btn", "返回设置");
+  const refresh = h("button", "ghost-btn", "刷新");
+  const meta = h("span", "muted");
+  bar.append(back, refresh, meta);
+  root.append(bar, pre);
+  back.onclick = () => (location.hash = "#/settings");
+  async function load() {
+    meta.textContent = "读取中…";
+    try {
+      const r = await fetch("/api/log?tail=800");
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.msg || `HTTP ${r.status}`);
+      pre.textContent = await r.text();
+      meta.textContent = "来源 ui/electron-dev.log（尾部 800 行）";
+      pre.scrollTop = pre.scrollHeight;
+    } catch (e: any) {
+      pre.innerHTML = "";
+      pre.append(h("span", "muted", `读不到日志：${e.message}（Electron 壳层未运行时属正常）`));
+      meta.textContent = "";
+    }
+  }
+  refresh.onclick = load;
+  await load();
 }
 
 async function userView(root: HTMLElement) {
@@ -228,7 +353,7 @@ async function userView(root: HTMLElement) {
       <h2 style="margin:12px 0 4px">${base.name}</h2>
       <div class="badges" style="justify-content:center">${identityBadges(home, vip)}</div>
       <p class="muted">UID: ${base.encrypted_uin ?? ""}</p>
-      <button id="logout" class="ghost-btn">退出登录</button>`;
+      <button id="logout" class="ghost-btn danger">退出登录</button>`;
     wrap.querySelector<HTMLElement>("#logout")!.onclick = async () => {
       await api("/login/logout", { method: "POST" }).catch(() => {});
       location.href = "/login.html"; // 登录态变化走整页，重置侧栏
@@ -311,6 +436,7 @@ export const views: Record<string, (root: HTMLElement, q: URLSearchParams) => Pr
   "/singer": singerView,
   "/album": albumView,
   "/settings": settingsView,
+  "/log": logView,
   "/user": userView,
   "/login": loginView,
 };

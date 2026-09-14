@@ -1,4 +1,5 @@
 // 「正在播放 / 歌词」全屏覆盖页：点击播放条封面展开/收起（唯一入口；播放条不放开关按钮）。
+// 无标题栏 CSD：np 铺满整窗，右上角悬浮窗口按钮胶囊（z-index 更高）在其上。
 // 歌词 = 整首列表：当前句居中、清晰、染色与进度条同源（--np-hl，未来动态逐字同色）；
 // 其余行模糊渐隐。滚轮可自由翻阅全文（翻阅期间暂停自动跟随，播放进度追上行号后恢复跟随）。
 // 右侧 = 封面在上，歌名 / 「歌手 - 专辑」在下，文本右对齐且与封面右缘齐平。
@@ -14,14 +15,14 @@ export function NowPlaying(): HTMLElement {
   el.innerHTML = `
     <div class="np-bg" id="np-bg"></div>
     <div class="np-scrim"></div>
-    <button class="np-tool" id="np-trans" aria-label="显示/隐藏翻译" title="翻译歌词">文/A</button>
     <div class="np-inner">
       <div class="np-lyrics" id="np-lyrics"></div>
       <div class="np-side">
         <div class="np-cover" id="np-cover"></div>
         <div class="np-meta">
-          <div class="np-title" id="np-title">未在播放</div>
-          <div class="np-artist" id="np-artist"></div>
+          <div class="np-title np-marquee" id="np-title"><span class="mt">未在播放</span></div>
+          <div class="np-artist np-marquee" id="np-artist"><span class="mt"></span></div>
+          <button class="np-trans" id="np-trans" type="button" aria-label="显示/隐藏翻译" title="翻译歌词">文/A</button>
         </div>
       </div>
     </div>
@@ -29,7 +30,35 @@ export function NowPlaying(): HTMLElement {
 
   const $ = <T extends HTMLElement>(id: string) => el.querySelector<T>("#" + id)!;
   const bg = $("np-bg"), lyrics = $("np-lyrics"), cover = $("np-cover");
-  const title = $("np-title"), artist = $("np-artist");
+
+  // 共享 marquee：容器宽 < 文本宽才启用滚动；--mx 行程在溢出量外再补偿两端渐隐遮罩 ±12px，
+  // 保证每一字符都能完整滚进清晰区（右对齐文本溢出在左，故正向平移）。
+  // 文本没变不动 class/变量（notify 每帧跑，防止动画被重启）；ResizeObserver 覆盖窗口缩放重测。
+  function marquee(boxId: string) {
+    const box = $(boxId);
+    const inner = box.querySelector<HTMLElement>(".mt")!;
+    let sig = "";
+    function measure() {
+      if (!sig) return;
+      const over = inner.scrollWidth - box.clientWidth;
+      box.classList.toggle("over", over > 1);
+      if (over > 1) {
+        // 溢出在右：终点 = -(over+10)，让尾字完整滚进右缘清晰区（起点的 +10 见 CSS）
+        box.style.setProperty("--mx", `${-(over + 10)}px`);
+        box.style.setProperty("--md", `${Math.max(5, Math.round((over + 20) / 32))}s`);
+      }
+    }
+    new ResizeObserver(measure).observe(box);
+    return (text: string) => {
+      if (text === sig) return;
+      sig = text;
+      inner.textContent = text;
+      box.classList.remove("over");
+      measure();
+    };
+  }
+  const setTitle = marquee("np-title");
+  const setArtist = marquee("np-artist");
 
   $("np-trans").onclick = () => player.toggleTrans();
 
@@ -92,9 +121,9 @@ export function NowPlaying(): HTMLElement {
     const st: "idle" | "loading" | "ok" | "none" = player.lyrics.length ? "ok" : player.lyricState;
     if (s?.mid !== lastMid || st !== lastLyricState) buildLyricDom(s);
     lastLyricState = st;
-    title.textContent = s?.name ?? "未在播放";
+    setTitle(s?.name ?? "未在播放");
     const albumName = (s as any)?.album?.name ?? "";
-    artist.textContent = s ? [(s.singer ?? []).map((x) => x.name).join(" / "), albumName].filter(Boolean).join(" - ") : "";
+    setArtist(s ? [(s.singer ?? []).map((x) => x.name).join(" / "), albumName].filter(Boolean).join(" - ") : "");
     cover.innerHTML = pic ? `<img src="${pic}" alt=""/>` : `<div class="np-cover-ph">${icons.disc ?? ""}</div>`;
 
     // 高亮当前歌词行 + 滚动居中（翻阅模式暂停自动跟随；3s 静默或点击行号恢复）

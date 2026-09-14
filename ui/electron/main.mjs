@@ -1,6 +1,6 @@
 // Quaver — Electron 主进程（ESM）
 // 起一个进程内 vite preview（dist/ + /api 中继插件），窗口加载 http://127.0.0.1:<port>
-// frame:false：使用界面自带的标题栏（CSD 占位转正），min/max/close 经 preload IPC 接管。
+// frame:false：无原生标题栏——窗口内右上角悬浮三个窗口按钮（min/max/close），经 preload IPC 接管。
 import { app, BrowserWindow, ipcMain } from "electron";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -18,6 +18,10 @@ import { appendFileSync } from "node:fs";
 const log = (...a) => { const s = a.map((x) => (typeof x === "string" ? x : String(x))).join(" "); try { appendFileSync(LOG, s + "\n"); } catch {} console.log(s); };
 
 let win = null;
+let cachedUrl = null; // preview 服务器只起一次；CSD/SSD 重建窗口时复用
+// 窗口装饰模式：csd=自绘（frame:false，悬浮胶囊）；ssd=系统标题栏。渲染层 setDecor 偏好后重建窗口。
+let decorMode = "csd";
+let rebuilding = false;
 
 function serveStatic() {
   // dist 缺失时的友好错误页（先 npm run build）
@@ -38,7 +42,8 @@ function serveStatic() {
 }
 
 async function createWindow() {
-  let url;
+  let url = cachedUrl;
+  if (!url) {
   log("[quaver] module loaded; dist exists:", existsSync(join(DIST, "index.html")));
   if (existsSync(join(DIST, "index.html"))) {
     // vite preview：产物 + /api 中继（relay.ts 插件）同进程；动态 import 规避顶层导入副作用
@@ -53,6 +58,8 @@ async function createWindow() {
     s.listen(4175, "127.0.0.1");
     url = "http://127.0.0.1:4175/";
   }
+  cachedUrl = url;
+  }
   log("[quaver] loading", url);
 
   win = new BrowserWindow({
@@ -60,7 +67,7 @@ async function createWindow() {
     height: 840,
     minWidth: 900,
     minHeight: 600,
-    frame: false, // 自绘标题栏（CSD）
+    frame: decorMode === "ssd", // CSD=无原生标题栏（自绘悬浮胶囊）；SSD=系统标题栏
     backgroundColor: "#f7f7f8",
     title: "Quaver",
     webPreferences: {
@@ -82,6 +89,23 @@ ipcMain.on("quaver:win", (_e, action) => {
   else if (action === "close") win.close();
 });
 
+// 装饰模式切换（CSD<->SSD）：frame 只能在构造时给定 → 记住几何、拆掉旧窗、重建。
+// rebuilding 标志防止 window-all-closed 在拆窗瞬间退出应用。
+ipcMain.on("quaver:decor", (_e, mode) => {
+  const next = mode === "ssd" ? "ssd" : "csd";
+  if (next === decorMode) return;
+  const bounds = win?.getBounds();
+  const maximized = win?.isMaximized();
+  decorMode = next;
+  log("[quaver] decor ->", next);
+  rebuilding = true;
+  win?.destroy();
+  createWindow().then(() => {
+    if (win && bounds) win.setBounds(bounds);
+    if (win && maximized) win.maximize();
+  }).finally(() => (rebuilding = false));
+});
+
 // Wayland：本机 Electron 44 默认 ozone 平台即可，不加任何 commandLine 开关
 log("[quaver] main.mjs entered, app name:", app.name || "(unset)");
 // 单实例：重复启动聚焦已有窗口（防止误开多份 preview/日志串台）
@@ -100,4 +124,4 @@ app.whenReady().then(() => {
     app.quit();
   });
 });
-app.on("window-all-closed", () => app.quit());
+app.on("window-all-closed", () => { if (!rebuilding) app.quit(); });

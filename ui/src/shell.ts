@@ -91,15 +91,14 @@ export function bootShell() {
   const frame = document.createElement("div");
   frame.className = "frame";
   frame.innerHTML = `
-    <!-- CSD 标题栏拖拽区（壳层 CSS -webkit-app-region / 原生拖拽待定，先占位） -->
-    <header class="titlebar" data-csd-drag>
-      <span class="brand">Quaver Music - Yet another QQ Music Player</span>
-      <div class="winbtns">
-        <button aria-label="最小化" data-win="min"><svg viewBox="0 0 12 12" width="11" height="11"><path d="M2 6h8" stroke="currentColor" stroke-width="1.2"/></svg></button>
-        <button aria-label="最大化" data-win="max"><svg viewBox="0 0 12 12" width="11" height="11"><rect x="2.5" y="2.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
-        <button aria-label="关闭" data-win="close"><svg viewBox="0 0 12 12" width="11" height="11"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.2"/></svg></button>
-      </div>
-    </header>
+    <!-- CSD：无标题栏。窗口内右上角悬浮胶囊三钮（min/max/close），胶囊底即拖拽区；顶缘另有一条隐形拖拽细条 -->
+    <div class="win-dragtop" aria-hidden="true"></div>
+    <div class="winbtns" data-csd-drag>
+      <span class="win-grip" aria-hidden="true"><svg viewBox="0 0 16 12" width="14" height="11"><g fill="currentColor"><circle cx="4" cy="3.5" r="1.1"/><circle cx="8" cy="3.5" r="1.1"/><circle cx="12" cy="3.5" r="1.1"/><circle cx="4" cy="8.5" r="1.1"/><circle cx="8" cy="8.5" r="1.1"/><circle cx="12" cy="8.5" r="1.1"/></g></svg></span>
+      <button aria-label="最小化" data-win="min"><svg viewBox="0 0 12 12" width="11" height="11"><path d="M2 6h8" stroke="currentColor" stroke-width="1.2"/></svg></button>
+      <button aria-label="最大化" data-win="max"><svg viewBox="0 0 12 12" width="11" height="11"><rect x="2.5" y="2.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
+      <button aria-label="关闭" data-win="close"><svg viewBox="0 0 12 12" width="11" height="11"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.2"/></svg></button>
+    </div>
     <div class="body">
       <aside class="sidebar">
         <a class="user" id="user-header" href="#/login" title="点击登录">
