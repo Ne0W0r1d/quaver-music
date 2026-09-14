@@ -3,6 +3,10 @@
   "productName": "Quaver",
   "description": "Quaver Music — 又一个第三方 QQ 音乐客户端（Electron + Python sidecar）",
   "author": "ne0w0r1d",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ne0W0r1d/quaver-music.git"
+  },
   "private": true,
   "version": "0.0.1",
   "type": "module",
