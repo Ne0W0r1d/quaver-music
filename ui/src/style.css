@@ -156,6 +156,7 @@ button { font: inherit; }
 .rows { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; }
 .row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; cursor: pointer; user-select: none; }
 .row:hover { background: var(--row-hover); }
+.row.sel { background: var(--row-hover); box-shadow: inset 2px 0 0 var(--acc); } /* 单击选中（已预加载播放链接） */
 .row.playing { background: var(--tint-row); }
 .row .idx { width: 22px; text-align: right; color: var(--idx); font-size: 12px; flex: 0 0 auto; }
 .row .rthumb { width: 44px; height: 44px; border-radius: 6px; background: var(--ph); overflow: hidden; flex: 0 0 auto; }
@@ -215,6 +216,42 @@ button { font: inherit; }
 .now .s { font-size: 11px; color: var(--ink2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .pb-mid { display: flex; align-items: center; gap: 6px; margin: 0 auto; }
+/* 音质胶囊：挂在右侧按钮组（循环之后、红心之前），显示当前/生效短档名 */
+.pb-q {
+  border: 1px solid var(--glass-line); background: var(--ph2); color: var(--ink2);
+  height: 24px; min-width: 44px; padding: 0 8px; border-radius: 999px; cursor: pointer;
+  font-size: 11px; font-weight: 600; letter-spacing: .2px; margin: 0 4px;
+  white-space: nowrap; transition: color .12s, border-color .12s;
+}
+.pb-q:hover { color: var(--ink); border-color: var(--ink3); }
+.pb-q.active { color: var(--cyan); border-color: #19c2d866; }
+.pb-q:disabled { opacity: .5; cursor: default; }
+/* 音质浮窗：玻璃底小菜单，锚在音质按钮上方（右侧对齐，同音量浮窗） */
+.pb-qpop {
+  position: absolute; right: 68px; bottom: calc(100% + 10px); z-index: 70;
+  display: flex; flex-direction: column; gap: 2px; padding: 6px; min-width: 190px;
+  max-height: 320px; overflow-y: auto;
+  background: var(--volpop); border: 1px solid var(--glass-line); border-radius: 12px;
+  box-shadow: 0 10px 32px rgba(15,20,30,.18);
+  backdrop-filter: blur(24px) saturate(1.5); -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  opacity: 0; pointer-events: none; transform: translateY(6px); transition: opacity .16s, transform .16s;
+}
+.player.q-open .pb-qpop { opacity: 1; pointer-events: auto; transform: none; }
+.qp-q {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  border: 0; background: transparent; color: var(--ink2); font-size: 12.5px; text-align: left;
+  padding: 7px 10px; border-radius: 8px; cursor: pointer;
+}
+.qp-q:hover { background: var(--press); color: var(--ink); }
+.qp-q.sel { color: var(--cyan); font-weight: 600; }
+.qp-q .muted { font-size: 11px; font-style: normal; opacity: .75; }
+/* 取链/缓冲中：spinner 旋转 + 播放键描边 */
+.player.loading .pb-play { animation: pb-pulse 1.6s ease-in-out infinite; }
+.player.loading .pb-play svg { animation: pb-spin .9s linear infinite; }
+.pb-play svg { transform-origin: center; }
+@keyframes pb-spin { to { transform: rotate(360deg); } }
+@keyframes pb-pulse { 0%,100% { box-shadow: 0 0 0 0 #19c2d855; } 50% { box-shadow: 0 0 0 6px #19c2d800; } }
+.pb-err { font-style: normal; color: #e8747a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
 .pb-btn {
   border: 0; background: transparent; color: var(--ink3); width: 34px; height: 34px; border-radius: 50%;
   display: grid; place-items: center; cursor: pointer; padding: 0;
@@ -405,6 +442,8 @@ html:not([data-theme="dark"]) .ghost-btn.danger:hover { background: #fdecec; bor
 .sw-light { background: #fff; }
 .sw-dark { background: #16181c; }
 .opt-card.q { padding: 8px 14px; border-radius: 999px; font-size: 13px; }
+.opt-card.q .q-lock { font-size: 10px; color: #ff8a3c; font-style: normal; }
+.q-badge { vertical-align: 1px; }
 #quality-grid { max-width: 452px; } /* 约束为 4+3 换行（对齐设计稿） */
 
 /* 字体/后端等「标签 + 下拉」行 */

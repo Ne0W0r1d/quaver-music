@@ -1,6 +1,6 @@
 // Quaver — 路由视图表（仅内容区渲染；播放器/侧栏常驻）
 // 视图函数: async (root, query) => cleanup?
-import { api, upPic, getQuality, setQuality, identityBadges } from "./lib/api";
+import { api, upPic, getQuality, setQuality, setSessionQuality, getStreamTiers, identityBadges } from "./lib/api";
 import { renderSongRows, loadLiked, type RowHooks } from "./lib/songs";
 import { player } from "./player";
 import {
@@ -246,17 +246,11 @@ async function settingsView(root: HTMLElement) {
         ${decodeRow("FFmpeg", "FFmpeg")}${decodeRow("MPV", "MPV", true)}${decodeRow("Blink", "Blink", true)}
       </div>
 
-      <div class="set-sub">默认音质</div>
+      <div class="set-sub">默认音质 <span class="muted set-subnote" id="q-member-note"></span></div>
       <div class="opt-cards" id="quality-grid">
-        <button class="opt-card q" data-q="128" type="button">标准音质</button>
-        <button class="opt-card q" data-q="320" type="button">高品质 HQ</button>
-        <button class="opt-card q" data-q="flac" type="button">无损 SQ</button>
-        <button class="opt-card q" type="button" disabled>High-res 无损</button>
-        <button class="opt-card q" type="button" disabled>臻品母带</button>
-        <button class="opt-card q" type="button" disabled>臻品全景声</button>
-        <button class="opt-card q" type="button" disabled>臻品音质</button>
+        <button class="opt-card q" data-q="auto" type="button">自动</button>
       </div>
-      <p class="muted set-hint">标准 / HQ / SQ 即时生效（下一首起按新音质取链接）；High-res 及以上等更换后端 API 后实现。</p>
+      <p class="muted set-hint">档位即时生效（下一首起按新音质协商取链）。臻品母带/全景声等高档位仅限会员；本后端只流播明文档，不提供加密档（QMC）解密。</p>
     </section>
 
     <section class="set-sec">
@@ -267,7 +261,7 @@ async function settingsView(root: HTMLElement) {
       <h2>关于</h2>
       <div class="about-img"><img src="/quaver-icon.svg" width=60 alt="Quaver Icon">
       <h3> Quaver Music </h3>
-      <h4> 又一个基于 Electron + Vite + C++ 的 QQ 音乐第三方客户端</h4>
+      <h4> 又一个基于 Electron + Vite 前端 + TS/Py 混合后端的 QQ 音乐第三方客户端</h4>
       <small> Version: Prototype </small>
     </section>`
     ;
@@ -300,11 +294,35 @@ async function settingsView(root: HTMLElement) {
   const decode = getDecode();
   radios.forEach((r) => { r.checked = r.value === decode; r.onchange = () => { if (r.checked) setDecode(r.value); }; });
 
-  // 默认音质：复用现有 QUALITIES 三挡（128/320/flac），更高档设计稿即标「等更换后端 API 后实现」
+  // 默认音质：档位由后端按会员等级下发（/stream/tiers）；locked 档画锁标不可选。
   const qBox = wrap.querySelector<HTMLElement>("#quality-grid")!;
+  const qNote = wrap.querySelector<HTMLElement>("#q-member-note")!;
   const syncQ = () => syncSel(qBox, "q", getQuality());
-  qBox.querySelectorAll<HTMLElement>("[data-q]").forEach((b) => { b.onclick = () => { setQuality(b.dataset.q as any); syncQ(); }; });
-  syncQ();
+  const bindQ = () => {
+    qBox.querySelectorAll<HTMLButtonElement>("[data-q]").forEach((b) => {
+      if (!b.disabled) b.onclick = () => {
+        setQuality(b.dataset.q as any);
+        setSessionQuality(null); // 播放条会话覆盖让位给新的默认档（新档自下一首起生效）
+        syncQ();
+        player.notifyPublic();
+      };
+    });
+  };
+  bindQ(); syncQ();
+  getStreamTiers(true).then((t) => {
+    qNote.textContent = `（当前：${t.membership_label}${t.membership ? "" : "，高档位需会员"}）`;
+    for (const tier of t.all_tiers) {
+      const btn = document.createElement("button");
+      btn.className = "opt-card q";
+      btn.dataset.q = tier.id;
+      btn.type = "button";
+      btn.innerHTML = tier.label + (tier.hi_res ? ' <span class="muted soon">Hi-Res</span>' : "")
+        + (tier.locked ? ' <span class="q-lock">🔒会员</span>' : "");
+      if (tier.locked) btn.disabled = true;
+      qBox.append(btn);
+    }
+    bindQ(); syncQ();
+  }).catch(() => { qNote.textContent = "（音质服务不可用）"; });
 
   // 调试：日志页面（壳层把 ui/electron-dev.log 经 /api/log 尾部暴露为纯文本，见 relay.ts）
   wrap.querySelector<HTMLElement>("#open-log")!.onclick = () => (location.hash = "#/log");

@@ -3,6 +3,8 @@ dist/
 .astro/
 .auth-state/
 .venv/
+__pycache__/
+*.pyc
 *.log
 .DS_Store
 dist-bin/

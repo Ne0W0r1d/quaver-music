@@ -17,14 +17,14 @@ export function QueuePanel(): HTMLElement {
   player.on(() => {
     el.classList.toggle("open", player.queueOpen);
     if (!player.queueOpen) return;
-    const s = player.queue.map((q) => q.mid).join(",") + "#" + player.index + "#" + player.playing;
+    const s = player.queue.map((q) => q.mid).join(",") + "#" + player.index + "#" + player.playing + "#" + player.loading;
     if (s === sig) return; // 内容没变不重建
     sig = s;
     list.innerHTML = "";
     player.queue.forEach((q, i) => {
       const row = document.createElement("div");
       row.className = "qp-item" + (i === player.index ? " cur" : "");
-      row.innerHTML = `<span class="qi-i">${i === player.index ? (player.playing ? "♪" : "❚❚") : i + 1}</span>
+      row.innerHTML = `<span class="qi-i">${i === player.index ? (player.loading ? "…" : player.playing ? "♪" : "❚❚") : i + 1}</span>
         <span class="qi-n">${escapeHtml(q.name)}</span>
         <span class="qi-a">${escapeHtml((q.singer ?? []).map((x) => x.name).join(" / "))}</span>`;
       row.onclick = () => player.jump(i);

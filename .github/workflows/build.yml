@@ -36,9 +36,11 @@ jobs:
         with:
           submodules: false
 
-      # 只初始化构建真正需要的子模块（uv 的 path 依赖），不去拉 Typhoeus
-      - name: Init QQMusicApi submodule
-        run: git submodule update --init --depth 1 vendor/QQMusicApi
+      # 构建需要两个 path 依赖 submodule：QQMusicApi（SDK）+ Typhoeus（播放后端核心）
+      - name: Init submodules
+        run: |
+          git submodule update --init --depth 1 vendor/QQMusicApi
+          git submodule update --init --depth 1 vendor/Typhoeus
 
       - uses: astral-sh/setup-uv@v10.1.0
 
@@ -178,6 +180,8 @@ jobs:
         run: |
           ls -la out/
           chmod +x out/quaver-server-* out/Quaver-*.AppImage 2>/dev/null || true
+          # -R 显式指定仓库：此 job 无 checkout，gh 靠 git 推断仓库会 fatal
           gh release create "$GITHUB_REF_NAME" \
+            -R "$GITHUB_REPOSITORY" \
             --generate-notes \
             out/quaver-server-* out/Quaver-*.AppImage

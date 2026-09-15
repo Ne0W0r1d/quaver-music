@@ -33,6 +33,8 @@ from qqmusic_api.modules.login import QRLoginType
 from qqmusic_api.modules.song import SongFileInfo
 
 from quaver_server.session import credential_has_login, self_euin, session
+from quaver_server.streaming import resolve_stream, serve_stream, tiers_async
+from typhoeus.errors import TyphoeusError
 
 logger = logging.getLogger("quaver.app")
 
@@ -170,6 +172,12 @@ async def _api_exc(_r: Request, exc: BaseApiException) -> JSONResponse:
 @app.exception_handler(StarletteHTTPException)
 async def _http_exc(_r: Request, exc: StarletteHTTPException) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"code": -1, "msg": str(exc.detail)})
+
+
+@app.exception_handler(TyphoeusError)
+async def _typhoeus_exc(_r: Request, exc: TyphoeusError) -> JSONResponse:
+    # Typhoeus 错误族自带 status（403 会员门控 / 451 加密档拒绝 / 502 provider / 422 未知档）
+    return JSONResponse(status_code=exc.status, content={"code": -exc.status, "msg": str(exc)})
 
 
 @app.exception_handler(RequestValidationError)
@@ -358,14 +366,46 @@ async def user_fav_songlists(page: int = 1, num: int = 20):
     return ok(await call(lambda: session.client.user.get_fav_songlist(euin, page=page, num=num)))
 
 
+# ===================== 播放流（Typhoeus：高档位协商 + 会员门控 + Range 中继） =====================
+
+class StreamResolveBody(BaseModel):
+    mid: str
+    media_mid: str | None = None
+    song_type: int = 0
+    tier: str = "128"          # typhoeus.quality.TierId
+    auto: bool = False         # true=自动音质模式（会员不足向下降档，不报 403）
+
+
+@app.get("/stream/tiers")
+async def stream_tiers():
+    """当前账号可播档位（会员门控数据源；加密档位永不出现——本后端不解密）。"""
+    return ok(await tiers_async())
+
+
+@app.post("/stream/resolve")
+async def stream_resolve(body: StreamResolveBody):
+    """协商一档明文流并换取中继 token；会员不足回 403，加密档回 451。"""
+    return ok(await resolve_stream(body.mid, body.media_mid, body.tier, body.auto))
+
+
+@app.get("/stream/{token}")
+async def stream_proxy(token: str, request: Request):
+    """明文流 Range 中继（<audio> src 指这里；vkey 留在后端，浏览器只见 token）。"""
+    return await serve_stream(token, request)
+
+
 # ===================== 歌曲 =====================
 
 @app.post("/song/urls")
 async def song_urls(body: SongUrlsBody):
-    """批量取播放链接；返回 {expiration, items:[{mid,url,result,...}]}（url 已拼 CDN）."""
+    """批量取播放链接；返回 {expiration, items:[{mid,url,result,...}]}（url 已拼 CDN）.
+
+    注意：per-item file_type 未显式给出时必须传 None——SDK 里 `item.file_type or file_type`
+    会优先取 item 的；若像早期版本那样默认成 MP3_128，批量档位会被静默覆盖成 128kbps。
+    """
     resp = await call(lambda: session.client.song.get_song_urls(
-        [SongFileInfo(mid=i.mid, file_type=file_type_of(i.file_type), media_mid=i.media_mid,
-                      song_type=i.song_type) for i in body.file_info],
+        [SongFileInfo(mid=i.mid, file_type=file_type_of(i.file_type) if i.file_type is not None else None,
+                      media_mid=i.media_mid, song_type=i.song_type) for i in body.file_info],
         file_type=file_type_of(body.file_type),
     ))
     domain = await cdn_domain()
