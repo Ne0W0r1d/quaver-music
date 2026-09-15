@@ -1,7 +1,7 @@
 // Quaver — Electron 主进程（ESM）
 // 起一个进程内 vite preview（dist/ + /api 中继插件），窗口加载 http://127.0.0.1:<port>
 // frame:false：无原生标题栏——窗口内右上角悬浮三个窗口按钮（min/max/close），经 preload IPC 接管。
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } from "electron";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -25,6 +25,49 @@ let sidecar = null;   // 打包态自拉起的 Python sidecar 子进程
 // 窗口装饰模式：csd=自绘（frame:false，悬浮胶囊）；ssd=系统标题栏。渲染层 setDecor 偏好后重建窗口。
 let decorMode = "csd";
 let rebuilding = false;
+let tray = null; // Linux 走 D-Bus StatusNotifierItem（KDE/GNOME 托盘）
+
+// 菜单栏治理：CSD（frameless）下 Electron 会把默认菜单画成窗口顶部菜单条，直接摘掉；
+// SSD 还原默认菜单。不用 setMenuBarVisibility(false)——它不缩 Linux 的内容区（留一条空白）。
+function applyMenu() {
+  Menu.setApplicationMenu(decorMode === "ssd" ? defaultMenu : null);
+}
+
+function showWindow() {
+  if (!win) { createWindow().catch((e) => log("[quaver] tray show failed:", String(e))); return; }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+// Wayland 下 isVisible() 在 hide→Activate 往返后会短暂滞后（实测），据此判断会把 toggle 做反。
+// 托盘可见性只以自维护标志为准；show/hide 事件仅同步外部路径（如 close 隐藏到托盘时）。
+let winShown = true;
+
+function toggleWindow() {
+  if (!win) { winShown = true; showWindow(); return; }
+  if (winShown) { winShown = false; win.hide(); }
+  else { winShown = true; showWindow(); }
+}
+
+function createTray() {
+  // Linux 下 Electron Tray 实现 StatusNotifierItem（D-Bus），Plasma 原生支持；
+  // AppIndicator 扩展没有 XEmbed 回退，老版 GNOME 看不到属正常。
+  const iconPath = app.isPackaged
+    ? join(process.resourcesPath, "build-res", "icon.png")
+    : join(UI_ROOT, "build-res", "icon.png");
+  let image = nativeImage.createFromPath(iconPath);
+  if (image.isEmpty()) image = nativeImage.createEmpty(); // 图标缺失也别让 Tray 构造抛错
+  tray = new Tray(image);
+  tray.setToolTip("Quaver");
+  const menu = Menu.buildFromTemplate([
+    { label: "显示/隐藏 Quaver", click: toggleWindow },
+    { type: "separator" },
+    { label: "退出", click: () => app.quit() },
+  ]);
+  tray.setContextMenu(menu);
+  tray.on("click", () => toggleWindow()); // 左键 = 显示/隐藏（SNI Activate → click）
+}
 
 function spawnSidecar() {
   // electron-builder 把 PyInstaller 产物放在 <resources>/bin/quaver-server
@@ -132,6 +175,8 @@ async function createWindow() {
   win.loadURL(url);
   win.webContents.on("did-finish-load", () => log("[quaver] page loaded OK"));
   win.webContents.on("did-fail-load", (_e, code, desc) => log("[quaver] load FAIL", code, desc));
+  win.on("show", () => (winShown = true));
+  win.on("hide", () => (winShown = false));
   win.on("closed", () => (win = null));
 }
 
@@ -152,15 +197,20 @@ ipcMain.on("quaver:decor", (_e, mode) => {
   decorMode = next;
   log("[quaver] decor ->", next);
   rebuilding = true;
+  if (!defaultMenu) defaultMenu = Menu.getApplicationMenu(); // 兜底：切走前若默认菜单已被摘，无从还原
   win?.destroy();
   createWindow().then(() => {
     if (win && bounds) win.setBounds(bounds);
     if (win && maximized) win.maximize();
+    applyMenu();
   }).finally(() => (rebuilding = false));
 });
 
 // Wayland：本机 Electron 44 默认 ozone 平台即可，不加任何 commandLine 开关
 log("[quaver] main.mjs entered, app name:", app.name || "(unset)");
+// 先抓一份 Electron 默认菜单（SSD 模式用），随后按 decorMode 应用。
+let defaultMenu = Menu.getApplicationMenu();
+applyMenu();
 // 单实例：重复启动聚焦已有窗口（防止误开多份 preview/日志串台）
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -176,6 +226,7 @@ app.whenReady().then(() => {
     log("[quaver] startup failed:", String(e && e.stack || e));
     app.quit();
   });
+  try { createTray(); } catch (e) { log("[quaver] tray init failed:", String(e)); }
 });
 app.on("window-all-closed", () => { if (!rebuilding) app.quit(); });
 app.on("will-quit", () => { try { sidecar?.kill(); } catch {} });

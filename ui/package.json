@@ -37,6 +37,10 @@
       {
         "from": "../api-server/dist-bin/quaver-server",
         "to": "bin/quaver-server"
+      },
+      {
+        "from": "build-res/icon.png",
+        "to": "build-res/icon.png"
       }
     ],
     "linux": {
