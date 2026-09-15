@@ -2,6 +2,7 @@
 // 视图函数: async (root, query) => cleanup?
 import { api, upPic, getQuality, setQuality, setSessionQuality, getStreamTiers, identityBadges } from "./lib/api";
 import { renderSongRows, loadLiked, type RowHooks } from "./lib/songs";
+import { pushHistory } from "./components/SearchBox";
 import { player } from "./player";
 import {
   getTheme, setTheme, getDecor, setDecor, getUiFont, setUiFont, getLyricFont, setLyricFont,
@@ -290,7 +291,7 @@ async function settingsView(root: HTMLElement) {
   themeBox.querySelectorAll<HTMLElement>("[data-opt]").forEach((b) => { b.onclick = () => { setTheme(b.dataset.opt as any); syncTheme(); }; });
   syncTheme();
 
-  // 窗口装饰：CSD（自绘悬浮胶囊）/ SSD（系统标题栏）。Electron 桥重建窗口；浏览器仅隐藏胶囊。
+  // 窗口装饰：CSD（右上角自绘按钮簇）/ SSD（系统标题栏）。Electron 桥重建窗口；浏览器仅隐藏按钮簇。
   const decorBox = wrap.querySelector<HTMLElement>("#decor-cards")!;
   const syncDecor = () => syncSel(decorBox, "opt", getDecor());
   decorBox.querySelectorAll<HTMLElement>("[data-opt]").forEach((b) => { b.onclick = () => { setDecor(b.dataset.opt as any); syncDecor(); }; });
@@ -470,8 +471,103 @@ async function loginView(root: HTMLElement) {
   return () => { stopped = true; window.clearInterval(timer); };
 }
 
+// —— 搜索页（顶部常驻搜索框的落点视图）：热搜词 + 分类标签（歌曲/歌手/专辑/歌单） ——
+const SEARCH_TABS = [
+  { type: "0", label: "歌曲" },
+  { type: "1", label: "歌手" },
+  { type: "2", label: "专辑" },
+  { type: "3", label: "歌单" },
+] as const;
+
+async function searchView(root: HTMLElement, q: URLSearchParams) {
+  const kw = (q.get("keyword") || "").trim();
+  const tab = SEARCH_TABS.find((t) => t.type === (q.get("type") ?? "0")) ?? SEARCH_TABS[0];
+  const head = h("div", "search-head");
+  head.innerHTML = `<h1 class="page-title" style="margin:6px 0 4px">${kw ? `“${kw.replace(/</g, "&lt;")}”的搜索结果` : "搜索"}</h1>
+    <div class="search-tabs">${SEARCH_TABS.map(
+      (t) => `<button class="stab${t.type === tab.type ? " sel" : ""}" data-type="${t.type}" type="button">${t.label}</button>`,
+    ).join("")}</div>`;
+  const box = h("div", "search-body", `<div class="muted">搜索中…</div>`);
+  root.append(head, box);
+  head.querySelectorAll<HTMLElement>(".stab").forEach((b) => {
+    b.onclick = () => {
+      if (b.dataset.type === tab.type) return;
+      location.hash = `#/search?keyword=${encodeURIComponent(kw)}&type=${b.dataset.type}`;
+    };
+  });
+  if (!kw) {
+    // 空关键词：展示热搜词，点一个即搜
+    box.innerHTML = "";
+    try {
+      const d: any = await api("/search/hotkey");
+      const keys: string[] = (d?.vec_hotkey ?? []).map((x: any) => x.title || x.query).filter(Boolean);
+      box.innerHTML = keys.length
+        ? `<div class="hot-chips">${keys.map((k) => `<button class="chip" type="button">${k.replace(/</g, "&lt;")}</button>`).join("")}</div>`
+        : `<div class="muted">输入关键词后回车即可搜索</div>`;
+      box.querySelectorAll<HTMLElement>(".chip").forEach((c) => {
+        c.onclick = () => {
+          pushHistory(c.textContent || "");
+          location.hash = `#/search?keyword=${encodeURIComponent(c.textContent || "")}`;
+        };
+      });
+    } catch (e: any) {
+      box.innerHTML = `<div class="muted">${e.message}</div>`;
+    }
+    return;
+  }
+  const go = (page: number) => {
+    location.hash = `#/search?keyword=${encodeURIComponent(kw)}&type=${tab.type}&page=${page}`;
+  };
+  const page = Math.max(1, parseInt(q.get("page") || "1", 10) || 1);
+  try {
+    const d: any = await api(`/search?keyword=${encodeURIComponent(kw)}&type=${tab.type}&page=${page}&num=30`);
+    box.innerHTML = "";
+    // 注意：响应各分类字段恒在（其余类为空数组），必须按当前 tab 显式取，不能用 ?? 链
+    const list: any[] = (tab.type === "0" ? d?.song : tab.type === "1" ? d?.singer : tab.type === "2" ? d?.album : d?.songlist) ?? [];
+    if (!list.length) { box.innerHTML = `<div class="muted">没有找到相关内容</div>`; return; }
+    const noEm = (s: string) => String(s ?? "").replace(/<\/?em>/gi, "");
+    if (tab.type === "0") {
+      // 高亮标签兜底剥离：后端 highlight=true，name 里可能带 <em>
+      for (const s of list) {
+        s.name = noEm(s.name);
+        for (const g of s.singer ?? []) g.name = noEm(g.name);
+        if (s.album) s.album.name = noEm(s.album.name);
+      }
+      renderSongRows(box, list, { showAlbum: true, onPlay: (s, i, all) => player.playList(all, i) });
+    } else if (tab.type === "1") {
+      box.classList.add("grid");
+      box.innerHTML = list.map((x) => `<a class="card" href="#/singer?mid=${encodeURIComponent(x.mid ?? "")}&name=${encodeURIComponent(noEm(x.name) || "歌手")}">
+          <div class="art round">${x.pic ? `<img src="${upPic(x.pic)}" alt="" loading="lazy"/>` : ""}</div>
+          <div class="name">${noEm(x.name) || "歌手"}</div><div class="sub">${x.song_num ? `${x.song_num} 首` : ""}</div></a>`).join("");
+    } else if (tab.type === "2") {
+      box.classList.add("grid");
+      box.innerHTML = list.map((x) => `<a class="card" href="#/album?mid=${encodeURIComponent(x.mid ?? "")}">
+          <div class="art">${x.pic ? `<img src="${upPic(x.pic)}" alt="" loading="lazy"/>` : ""}</div>
+          <div class="name">${noEm(x.name) || "专辑"}</div>
+          <div class="sub">${noEm(x.singer)}${x.time_public ? ` · ${x.time_public}` : ""}</div></a>`).join("");
+    } else {
+      box.className = "grid playlist-grid";
+      box.innerHTML = list.map((x) => `<a class="card" href="#/playlist?id=${encodeURIComponent(x.id ?? x.dirid ?? "")}&name=${encodeURIComponent(noEm(x.title) || "歌单")}">
+          <div class="art">${x.picurl ? `<img src="${upPic(x.picurl)}" alt="" loading="lazy"/>` : ""}</div>
+          <div class="name">${noEm(x.title) || "歌单"}</div>
+          <div class="sub">${x.nickname ? noEm(x.nickname) + " 创建" : ""}${x.songnum ? ` · ${x.songnum} 首` : ""}</div></a>`).join("");
+    }
+    const total: number = d?.total_num ?? 0;
+    if (d?.nextpage && d.nextpage !== -1) {
+      const more = h("div", "more-bar");
+      const btn = h("button", "ghost-btn", `加载更多（共 ${total || "?"} 条）`);
+      btn.onclick = () => go(page + 1);
+      more.append(btn);
+      box.append(more);
+    }
+  } catch (e: any) {
+    box.innerHTML = `<div class="muted">搜索失败：${e.message}</div>`;
+  }
+}
+
 export const views: Record<string, (root: HTMLElement, q: URLSearchParams) => Promise<(() => void) | void>> = {
   "/": homeView,
+  "/search": searchView,
   "/guess": guessView,
   "/daily": dailyView,
   "/liked": likedView,

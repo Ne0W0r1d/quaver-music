@@ -52,7 +52,7 @@ export function applyFonts() {
 export function setUiFont(v: string) { localStorage.setItem(K_UIFONT, v); applyFonts(); }
 export function setLyricFont(v: string) { localStorage.setItem(K_LYRFONT, v); applyFonts(); }
 
-// —— 窗口装饰：CSD=自绘标题栏（右上角悬浮胶囊按钮）；SSD=系统标题栏（Electron 重建窗口生效） ——
+// —— 窗口装饰：CSD=自绘（右上角平铺按钮簇，无标题栏/无浮窗底）；SSD=系统标题栏（Electron 重建窗口生效） ——
 export function getDecor(): DecorMode {
   return localStorage.getItem(K_DECOR) === "ssd" ? "ssd" : "csd";
 }

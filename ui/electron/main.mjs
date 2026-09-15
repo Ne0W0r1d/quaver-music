@@ -1,6 +1,6 @@
 // Quaver — Electron 主进程（ESM）
 // 起一个进程内 vite preview（dist/ + /api 中继插件），窗口加载 http://127.0.0.1:<port>
-// frame:false：无原生标题栏——窗口内右上角悬浮三个窗口按钮（min/max/close），经 preload IPC 接管。
+// frame:false：无原生标题栏——窗口右上角平铺三个窗口按钮（min/max/close）+抓握点，经 preload IPC 接管。
 import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } from "electron";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
@@ -22,13 +22,13 @@ const log = (...a) => { const s = a.map((x) => (typeof x === "string" ? x : Stri
 let win = null;
 let cachedUrl = null; // preview 服务器只起一次；CSD/SSD 重建窗口时复用
 let sidecar = null;   // 打包态自拉起的 Python sidecar 子进程
-// 窗口装饰模式：csd=自绘（frame:false，悬浮胶囊）；ssd=系统标题栏。渲染层 setDecor 偏好后重建窗口。
+// 窗口装饰模式：csd=自绘（frame:false，右上角按钮簇）；ssd=系统标题栏。渲染层 setDecor 偏好后重建窗口。
 let decorMode = "csd";
 let rebuilding = false;
 let tray = null; // Linux 走 D-Bus StatusNotifierItem（KDE/GNOME 托盘）
 
 // 关闭按钮行为（渲染层 quaver:close-action 同步；默认缩放到托盘）：
-// tray = 拦截 window close 改 hide（CSD 胶囊、SSD 标题栏、Alt+F4 全部生效，托盘菜单可恢复）；
+// tray = 拦截 window close 改 hide（CSD 按钮簇✕、SSD 标题栏✕、Alt+F4 全部生效，托盘菜单可恢复）；
 // quit = 走默认关闭流程（window-all-closed → app.quit）。
 let closeAction = "tray";
 let quitting = false;
@@ -259,7 +259,7 @@ async function createWindow() {
     height: 840,
     minWidth: 900,
     minHeight: 600,
-    frame: decorMode === "ssd", // CSD=无原生标题栏（自绘悬浮胶囊）；SSD=系统标题栏
+    frame: decorMode === "ssd", // CSD=无原生标题栏（右上角按钮簇）；SSD=系统标题栏
     backgroundColor: "#f7f7f8",
     title: "Quaver",
     icon: buildRes("icon.png"), // 深色版应用图标（任务栏/窗口管理器等），与 AppImage desktop 图标一致
@@ -273,7 +273,7 @@ async function createWindow() {
   win.webContents.on("did-finish-load", () => log("[quaver] page loaded OK"));
   win.webContents.on("did-fail-load", (_e, code, desc) => log("[quaver] load FAIL", code, desc));
   win.on("close", (e) => {
-    // 缩放到托盘：任何路径的 close（胶囊✕/系统标题栏✕/Alt+F4）都改 hide；
+    // 缩放到托盘：任何路径的 close（按钮簇✕/系统标题栏✕/Alt+F4）都改 hide；
     // 重建窗口（decor 切换）、真退出（托盘菜单/quit 行为）时放行。
     // 注意不因 tray 创建失败而放行 close：隐藏窗口仍可靠 second-instance/MPRIS raise 找回。
     if (closeAction === "tray" && !quitting && !rebuilding) {

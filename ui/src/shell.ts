@@ -1,14 +1,15 @@
 // Quaver — SPA 壳层（入口 main.ts 调用 bootShell）
 // 顶栏/侧栏/播放条/正在播放页/队列面板 = 常驻不销毁；
-// 只有 .content 主内容区按路由切换视图（首页/猜你喜欢/每日30首/我喜欢/歌单/设置/我的），
-// 切视图不打断音频。地址栏 hash 路由（file:// 与壳层加载均兼容），
-// 旧的多页入口（daily.html 等）保留为薄跳转层。
+// .content 内 = 常驻搜索框（.content-top）+ 按路由切换的视图区（.route），
+// 切视图不打断音频、搜索框与输入状态不随视图重建。地址栏 hash 路由
+// （file:// 与壳层加载均兼容），旧的多页入口（daily.html 等）保留为薄跳转层。
 import "./style.css";
 import { api, coverUrl, upPic, identityBadges } from "./lib/api";
 import { player } from "./player";
 import { PlayerBar } from "./components/PlayerBar";
 import { NowPlaying } from "./components/NowPlaying";
 import { QueuePanel } from "./components/QueuePanel";
+import { SearchBox } from "./components/SearchBox";
 import { views } from "./views";
 
 export const nav = [
@@ -31,7 +32,9 @@ const icons: Record<string, string> = {
     '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 19c1.5-3 4-4.5 7-4.5s5.5 1.5 7 4.5"/></svg>',
 };
 
-export const state = { content: null as HTMLElement | null };
+// content = .content 主内容区整体；route = 内容区里可被路由替换的部分。
+// 搜索框在 content 内、route 外——随壳层常驻，切视图/刷新视图不重建、输入不丢。
+export const state = { content: null as HTMLElement | null, route: null as HTMLElement | null };
 
 export function currentRoute() {
   const h = location.hash.replace(/^#\/?/, "");
@@ -42,7 +45,7 @@ export function currentRoute() {
 let mountedCleanup: (() => void) | null = null;
 
 export async function renderRoute() {
-  if (!state.content) return;
+  if (!state.route) return;
   const { path, query } = currentRoute();
   // 导航高亮
   document.querySelectorAll<HTMLElement>(".nav a").forEach((a) => {
@@ -53,14 +56,14 @@ export async function renderRoute() {
   mountedCleanup = null;
 
   const view = views[path] ?? views["/"];
-  state.content.innerHTML = "";
-  state.content.scrollTop = 0;
+  state.route.innerHTML = "";
+  state.route.scrollTop = 0;
   try {
-    const cleanup = await view(state.content, query);
+    const cleanup = await view(state.route, query);
     if (typeof cleanup === "function") mountedCleanup = cleanup;
   } catch (e) {
     console.error(e);
-    state.content.innerHTML = `<div class="muted">页面加载失败：${String((e as Error).message ?? e)}</div>`;
+    state.route.innerHTML = `<div class="muted">页面加载失败：${String((e as Error).message ?? e)}</div>`;
   }
   player.markActive();
 }
@@ -91,7 +94,7 @@ export function bootShell() {
   const frame = document.createElement("div");
   frame.className = "frame";
   frame.innerHTML = `
-    <!-- CSD：无标题栏。窗口内右上角悬浮胶囊三钮（min/max/close），胶囊底即拖拽区；顶缘另有一条隐形拖拽细条 -->
+    <!-- CSD：无标题栏、无浮窗。三钮（min/max/close）+抓握点平铺窗口右上角，簇底即拖拽区；顶缘另有一条隐形拖拽细条 -->
     <div class="win-dragtop" aria-hidden="true"></div>
     <div class="winbtns" data-csd-drag>
       <span class="win-grip" aria-hidden="true"><svg viewBox="0 0 16 12" width="14" height="11"><g fill="currentColor"><circle cx="4" cy="3.5" r="1.1"/><circle cx="8" cy="3.5" r="1.1"/><circle cx="12" cy="3.5" r="1.1"/><circle cx="4" cy="8.5" r="1.1"/><circle cx="8" cy="8.5" r="1.1"/><circle cx="12" cy="8.5" r="1.1"/></g></svg></span>
@@ -115,11 +118,16 @@ export function bootShell() {
         <div class="playlists" id="playlists"><div class="pl-empty">登录后可见歌单</div></div>
         <a class="settings" href="#/settings" title="设置">${icons.settings}</a>
       </aside>
-      <main class="content"></main>
+      <main class="content">
+        <div class="route" id="route"></div>
+      </main>
     </div>
   `;
   document.body.prepend(frame);
   state.content = frame.querySelector<HTMLElement>(".content")!;
+  state.route = frame.querySelector<HTMLElement>("#route")!;
+  // 搜索框常驻内容区（absolute 浮层，与页面标题同行居中）：路由切换/视图刷新只重建 #route，它不动
+  state.content.append(SearchBox());
   // 播放条必须在 .frame 流内（占 flex 高度）；np/队列是 fixed 覆盖层，挂 body 即可
   frame.append(PlayerBar());
   document.body.append(NowPlaying(), QueuePanel());
