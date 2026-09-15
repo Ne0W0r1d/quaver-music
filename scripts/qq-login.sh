@@ -6,7 +6,7 @@
 #
 # 用法:  ./scripts/qq-login.sh [mobile|qq|wx]
 #   mobile = 手机 QQ 音乐 App 扫码（推荐，MQTT 推送）; qq = 手机 QQ; wx = 微信
-# 依赖:  curl jq qrencode zbarimg;  sidecar 已在 :3200 运行（api-server: uv run run.py）
+# 依赖:  curl jq qrencode zbarimg;  sidecar 已在 :3200 运行（vendor/Typhoeus: uv run run.py）
 set -euo pipefail
 
 CHANNEL="${1:-mobile}"

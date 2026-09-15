@@ -1,6 +1,6 @@
 import asyncio, json, sys, os
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "api-server"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "vendor" / "Typhoeus"))
 from quaver_server.session import session, self_euin
 
 async def main():

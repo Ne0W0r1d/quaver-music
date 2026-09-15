@@ -1,6 +1,6 @@
 """实测各音质档位：result 码 + 首块 magic（判定明文/加密）。一次性 spike 脚本。
 
-用法: api-server/.venv/bin/python scripts/probe_tiers.py [song_mid]
+用法: vendor/Typhoeus/.venv/bin/python scripts/probe_tiers.py [song_mid]
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "api-server"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "vendor" / "Typhoeus"))
 
 import niquests  # noqa: E402
 from qqmusic_api.modules.song import EncryptedSongFileType, SongFileInfo, SongFileType  # noqa: E402

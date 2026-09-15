@@ -13,8 +13,9 @@
 ## 形态
 
 - `vendor/QQMusicApi` = git submodule（pin commit）；
-  `api-server/`（uv 工程）以 path 依赖安装 `qqmusic-api-python`。
-- `api-server/quaver_server/`：薄 FastAPI 适配层（不做上游那套限流/缓存/多账号池——
+  `vendor/Typhoeus/`（uv 工程，原 `api-server/`，2026-09 并入 Typhoeus）以 path
+  依赖安装 `qqmusic-api-python`。
+- `vendor/Typhoeus/quaver_server/`：薄 FastAPI 适配层（不做上游那套限流/缓存/多账号池——
   单机 sidecar 用不上），监听 :3200（与旧口一致，relay 无感）。
   - `run.py` 启动；`session.py` 管 Client 生命周期。
   - 登录凭证 = SDK `Credential`（musicid+musickey…），QR `DONE` 时由 sidecar
@@ -62,7 +63,7 @@
 
 ```bash
 git submodule update --init
-cd api-server && uv sync && uv run run.py        # :3200
+cd vendor/Typhoeus && uv sync && uv run run.py        # :3200
 ./scripts/qq-login.sh mobile                     # 终端扫码（或应用内登录页）
 curl -s localhost:3200/login/status | jq
 curl -s "localhost:3200/search?keyword=%E5%91%8A%E7%99%BD&num=3" | jq '.data.song[0].name'

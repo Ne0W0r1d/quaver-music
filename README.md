@@ -71,7 +71,7 @@ z：修补版本号
 
 该项目使用 AGPLv3 及其未来版本协议协议，其使用的 API 使用 GPLv3 及其未来版本协议和 MIT 协议
 
-[Python - GPLv3-or-later - l-1124/QQMusicApi](https://github.com/l-1124/QQMusicApi)（当前后端，`vendor/QQMusicApi` submodule + `api-server/` 适配层）<br>
+[Python - GPLv3-or-later - l-1124/QQMusicApi](https://github.com/l-1124/QQMusicApi)（当前后端，`vendor/QQMusicApi` submodule + `vendor/Typhoeus` 的 `quaver_server/` 适配层）<br>
 [NodeJS - MIT - yakult-green-tea](https://github.com/yakult-green-tea/qq-music-api)（早期 spike 用过，已替换，见 docs/spike-2）
 
 与此同时，该项目依旧无法避免属于 QQ 音乐第三方客户端，请尊重 QQ 音乐的最终用户协议，禁止破解 QQ 音乐的曲库，本应用仅提供流媒体服务，不提供任何下载服务。

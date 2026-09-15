@@ -2,7 +2,7 @@
 
 Vite 多页入口，运行时为 SPA 壳：`index.html` 是唯一真页面（hash 路由），
 其余 `*.html` 是深链兼容的跳转层。无框架，原生 TS + DOM。
-浏览器不直接碰 QQ 音乐接口：所有请求走同源 `/api/*`，由 `src/relay.ts` 中继到本地 sidecar（:3200，`api-server/`）。
+浏览器不直接碰 QQ 音乐接口：所有请求走同源 `/api/*`，由 `src/relay.ts` 中继到本地 sidecar（:3200，`vendor/Typhoeus/`）。
 
 ```sh
 npm install

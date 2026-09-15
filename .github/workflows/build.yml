@@ -1,5 +1,5 @@
 # Quaver — Linux 前后端打包 CI
-# 后端：api-server (FastAPI sidecar) → PyInstaller onefile 二进制
+# 后端：vendor/Typhoeus (quaver_server FastAPI sidecar) → PyInstaller onefile 二进制
 # 前端：ui (Electron + Vite) → AppImage（内含对应架构的 sidecar）
 # 架构：x86_64 + ARM64 双矩阵。PyInstaller 不能交叉编译，ARM 必须跑在
 #       GitHub 原生 ARM runner（ubuntu-24.04-arm）上，不用 QEMU。
@@ -36,7 +36,7 @@ jobs:
         with:
           submodules: false
 
-      # 构建需要两个 path 依赖 submodule：QQMusicApi（SDK）+ Typhoeus（播放后端核心）
+      # sidecar 在 vendor/Typhoeus（本仓 submodule）内构建，仅需 QQMusicApi（SDK）path 依赖
       - name: Init submodules
         run: |
           git submodule update --init --depth 1 vendor/QQMusicApi
@@ -49,11 +49,11 @@ jobs:
           python-version: "3.11"   # 与本地 uv.lock 生成环境一致（3.11/3.12 均满足 >=3.11,<3.14）
 
       - name: Install deps
-        working-directory: api-server
+        working-directory: vendor/Typhoeus
         run: uv sync --frozen --no-dev
 
       - name: PyInstaller onefile
-        working-directory: api-server
+        working-directory: vendor/Typhoeus
         run: |
           uv run --frozen --with pyinstaller --with pyinstaller-hooks-contrib \
             pyinstaller --clean --noconfirm --onefile \
@@ -72,7 +72,7 @@ jobs:
               build_entry.py
 
       - name: Smoke test binary
-        working-directory: api-server
+        working-directory: vendor/Typhoeus
         run: |
           mkdir -p "$HOME/.config/quaver"   # 无凭证文件也须能起（返回未登录）
           QUAVER_PORT=3999 ./dist-bin/quaver-server > /tmp/sidecar-ci.log 2>&1 &
@@ -89,13 +89,13 @@ jobs:
           exit $status
 
       - name: Rename for artifact
-        working-directory: api-server
+        working-directory: vendor/Typhoeus
         run: cp dist-bin/quaver-server dist-bin/quaver-server-$(uname -m)
 
       - uses: actions/upload-artifact@v7
         with:
           name: quaver-server-linux-${{ matrix.arch_label }}
-          path: api-server/dist-bin/quaver-server-${{ matrix.arch_label }}
+          path: vendor/Typhoeus/dist-bin/quaver-server-${{ matrix.arch_label }}
 
   # ────────────────────────────── 前端 ──────────────────────────────
   frontend:
@@ -125,7 +125,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: quaver-server-linux-${{ matrix.arch_label }}
-          path: api-server/dist-bin
+          path: vendor/Typhoeus/dist-bin
 
       # MPRIS 守护进程源码在 Typhoeus submodule（mpris/），esbuild 单文件产物供 extraResources
       - name: Init Typhoeus submodule
@@ -139,7 +139,7 @@ jobs:
 
       # extraResources 里约定文件名是 quaver-server
       - name: Stage sidecar
-        working-directory: api-server/dist-bin
+        working-directory: vendor/Typhoeus/dist-bin
         run: |
           mv quaver-server-${{ matrix.arch_label }} quaver-server
           chmod +x quaver-server
