@@ -10,7 +10,7 @@ const sh = (...args) =>
 let pass = 0, fail = 0;
 const check = (name, ok, detail = "") => { console.log((ok ? "PASS " : "FAIL ") + name + (detail ? "  | " + detail.slice(0, 140) : "")); ok ? pass++ : fail++; };
 
-const browser = await puppeteer.connect({ browserURL: "http://127.0.0.1:9333", defaultViewport: null });
+const browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${process.env.CDP_PORT || 9333}`, defaultViewport: null });
 const allPages = await browser.pages();
 const page = allPages.find((p) => (p.url() || "").includes("index.html")) || allPages[0];
 console.log("attached:", page.url());

@@ -46,6 +46,10 @@
       {
         "from": "build-res/icon.png",
         "to": "build-res/icon.png"
+      },
+      {
+        "from": "build-res/tray.png",
+        "to": "build-res/tray.png"
       }
     ],
     "linux": {

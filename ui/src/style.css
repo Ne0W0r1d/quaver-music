@@ -28,6 +28,10 @@ html[data-theme="dark"] {
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.55 var(--font-ui, var(--font-default)); }
 a { color: inherit; text-decoration: none; }
+/* 关于页图标：浅色主题用深色图标，深色主题用浅色图标（互衬底色） */
+.about-img .ic-light { display: none; }
+html[data-theme="dark"] .about-img .ic-light { display: inline-block; }
+html[data-theme="dark"] .about-img .ic-dark { display: none; }
 button { font: inherit; }
 
 /* 环境色层：当前封面模糊铺底（玻璃面板的色彩来源）。

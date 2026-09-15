@@ -259,7 +259,7 @@ async function settingsView(root: HTMLElement) {
     </section>
     <section class="set-sec">
       <h2>关于</h2>
-      <div class="about-img"><img src="/quaver-icon.svg" width=60 alt="Quaver Icon">
+      <div class="about-img"><img class="ic-dark" src="/quaver-icon-dark.svg" width=60 alt="Quaver Icon"><img class="ic-light" src="/quaver-icon.svg" width=60 alt="Quaver Icon">
       <h3> Quaver Music </h3>
       <h4> 又一个基于 Electron + Vite 前端 + TS/Py 混合后端的 QQ 音乐第三方客户端</h4>
       <small> Version: Prototype </small>

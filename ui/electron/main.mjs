@@ -136,12 +136,14 @@ ipcMain.on("quaver:mpris", (_e, state) => {
   if (state && state.t === "state") mprisWrite(state);
 });
 
+// build-res 资源定位：打包态在 <resources>/build-res，开发态在 ui/build-res。
+const buildRes = (name) => join(app.isPackaged ? process.resourcesPath : UI_ROOT, "build-res", name);
+
 function createTray() {
   // Linux 下 Electron Tray 实现 StatusNotifierItem（D-Bus），Plasma 原生支持；
   // AppIndicator 扩展没有 XEmbed 回退，老版 GNOME 看不到属正常。
-  const iconPath = app.isPackaged
-    ? join(process.resourcesPath, "build-res", "icon.png")
-    : join(UI_ROOT, "build-res", "icon.png");
+  // 托盘图固定用浅色版（tray.png）：面板多为深底，浅米底图标对比更好。
+  const iconPath = buildRes("tray.png");
   let image = nativeImage.createFromPath(iconPath);
   if (image.isEmpty()) image = nativeImage.createEmpty(); // 图标缺失也别让 Tray 构造抛错
   tray = new Tray(image);
@@ -253,6 +255,7 @@ async function createWindow() {
     frame: decorMode === "ssd", // CSD=无原生标题栏（自绘悬浮胶囊）；SSD=系统标题栏
     backgroundColor: "#f7f7f8",
     title: "Quaver",
+    icon: buildRes("icon.png"), // 深色版应用图标（任务栏/窗口管理器等），与 AppImage desktop 图标一致
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -293,7 +296,14 @@ ipcMain.on("quaver:decor", (_e, mode) => {
   }).finally(() => (rebuilding = false));
 });
 
-// Wayland：本机 Electron 44 默认 ozone 平台即可，不加任何 commandLine 开关
+// Wayland：本机 Electron 44 默认 ozone 平台即可，不加任何 ozone 相关开关。
+// 但要关掉 Electron 内嵌 Chromium 的 MPRIS mediator：渲染层 HTML5 音频开播后，
+// Chromium 自己会注册 org.mpris.MediaPlayer2.chromium.instance<pid>（Identity 用页面标题），
+// 与 Quaver 的 mpris daemon 在总线上双条目并存、互抢桌面部件/媒体键（实测 electron#18253 workaround）。
+// Quaver 不用 navigator.mediaSession，全局媒体键由我们自己的 daemon 经 MPRIS 提供 → 关掉零副作用。
+if (!process.env.QUAVER_KEEP_MEDIATOR) {
+  app.commandLine.appendSwitch("disable-features", "MediaSessionService,HardwareMediaKeyHandling");
+}
 log("[quaver] main.mjs entered, app name:", app.name || "(unset)");
 // 先抓一份 Electron 默认菜单（SSD 模式用），随后按 decorMode 应用。
 let defaultMenu = Menu.getApplicationMenu();
