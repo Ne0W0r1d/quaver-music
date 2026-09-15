@@ -127,6 +127,16 @@ jobs:
           name: quaver-server-linux-${{ matrix.arch_label }}
           path: api-server/dist-bin
 
+      # MPRIS 守护进程源码在 Typhoeus submodule（mpris/），esbuild 单文件产物供 extraResources
+      - name: Init Typhoeus submodule
+        run: git submodule update --init --depth 1 vendor/Typhoeus
+
+      - name: Build MPRIS daemon bundle
+        working-directory: vendor/Typhoeus/mpris
+        run: |
+          npm install
+          npm run build
+
       # extraResources 里约定文件名是 quaver-server
       - name: Stage sidecar
         working-directory: api-server/dist-bin

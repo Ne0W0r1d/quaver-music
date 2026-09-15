@@ -50,6 +50,92 @@ function toggleWindow() {
   else { winShown = true; showWindow(); }
 }
 
+// MPRIS cmd 里 raise/quit 由主进程消费，其余转发给渲染层执行
+
+function mprisDaemonPath() {
+  // 打包态：electron-builder extraResources 把编译产物放到 <resources>/mpris/
+  if (app.isPackaged) return join(process.resourcesPath, "mpris", "mpris-daemon.cjs");
+  // 开发态：vendor/Typhoeus/mpris/dist/（npm run build:mpris 产物，缺失则跳过 MPRIS）
+  return resolve(UI_ROOT, "..", "vendor", "Typhoeus", "mpris", "dist", "mpris-daemon.cjs");
+}
+
+let mprisBuf = "";      // daemon stdout 行缓冲
+let mprisReady = false; // 收到 hello 前缓存最新 state，避免总线未就绪时丢首帧
+let mprisPending = null;
+let mprisRetries = 0;
+let mprisDaemon = null; // 当前 daemon 子进程
+let mprisSpawnedAt = 0; // 上次拉起时刻（崩溃重拉的存活判据）
+
+function startMpris() {
+  if (process.platform !== "linux") return; // 本期只做 Linux MPRIS；macOS/Windows 原生媒体键另议
+  const script = mprisDaemonPath();
+  if (!existsSync(script)) {
+    log("[quaver] mpris daemon missing, skipped:", script);
+    return;
+  }
+  log("[quaver] spawning mpris daemon:", script);
+  // Electron 自带 node 跑 .cjs（ELECTRON_RUN_AS_NODE），打包态无需系统 node
+  const child = spawn(process.execPath, [script], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", QUAVER_MPRIS_NAME: "quaver" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    mprisBuf += chunk;
+    let i;
+    while ((i = mprisBuf.indexOf("\n")) >= 0) {
+      const line = mprisBuf.slice(0, i).trim();
+      mprisBuf = mprisBuf.slice(i + 1);
+      if (!line) continue;
+      let msg;
+      try { msg = JSON.parse(line); } catch { log("[mpris] bad stdout line:", line.slice(0, 120)); continue; }
+      if (msg.t === "hello") {
+        mprisReady = true;
+        log("[quaver] mpris daemon up:", msg.identity);
+        if (mprisPending) mprisWrite(mprisPending);
+      } else if (msg.t === "cmd") {
+        if (msg.cmd === "raise") {
+          if (!win) createWindow().catch(() => {});
+          else { if (win.isMinimized()) win.restore(); win.show(); win.focus(); winShown = true; }
+        } else if (msg.cmd === "quit") {
+          app.quit();
+        } else if (win && !win.isDestroyed()) {
+          win.webContents.send("quaver:mpris-cmd", msg);
+        }
+      }
+    }
+  });
+  child.stderr.on("data", (d) => log(String(d).trimEnd()));
+  child.on("exit", (code) => {
+    log("[quaver] mpris daemon exited:", code);
+    mprisReady = false;
+    mprisDaemon = null;
+    // 快速退出 = D-Bus 会话不可用（无总线/头环境），重试无意义；存活过的崩溃才重拉
+    if (code !== 0 && mprisRetries < 3 && Date.now() - mprisSpawnedAt > 5000) {
+      mprisRetries++;
+      setTimeout(startMpris, 2000 * mprisRetries);
+    }
+  });
+  mprisSpawnedAt = Date.now();
+  mprisDaemon = child;
+}
+
+function mprisWrite(state) {
+  mprisPending = state; // 始终留最新一帧：hello 未到先缓存，到了补发
+  if (!mprisReady || !mprisDaemon || mprisDaemon.killed || !mprisDaemon.stdin.writable) return;
+  try {
+    mprisDaemon.stdin.write(JSON.stringify(state) + "\n");
+  } catch (e) {
+    log("[quaver] mpris state write failed:", String(e));
+  }
+}
+
+// 渲染层快照（preload quaverMpris.send）→ 直写 daemon stdin
+ipcMain.on("quaver:mpris", (_e, state) => {
+  if (state && state.t === "state") mprisWrite(state);
+});
+
 function createTray() {
   // Linux 下 Electron Tray 实现 StatusNotifierItem（D-Bus），Plasma 原生支持；
   // AppIndicator 扩展没有 XEmbed 回退，老版 GNOME 看不到属正常。
@@ -156,6 +242,7 @@ async function createWindow() {
   }
   cachedUrl = url;
   }
+  if (process.env.QUAVER_URL) url = process.env.QUAVER_URL; // 集成测试：指向 vite dev server（含 __quaverPlayer 钩子）
   log("[quaver] loading", url);
 
   win = new BrowserWindow({
@@ -227,6 +314,10 @@ app.whenReady().then(() => {
     app.quit();
   });
   try { createTray(); } catch (e) { log("[quaver] tray init failed:", String(e)); }
+  try { startMpris(); } catch (e) { log("[quaver] mpris init failed:", String(e)); }
 });
 app.on("window-all-closed", () => { if (!rebuilding) app.quit(); });
-app.on("will-quit", () => { try { sidecar?.kill(); } catch {} });
+app.on("will-quit", () => {
+  try { sidecar?.kill(); } catch {}
+  try { mprisDaemon?.kill(); } catch {}
+});

@@ -19,7 +19,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "app": "npm run build && electron .",
-    "dist": "npm run build && electron-builder --linux AppImage"
+    "mpris:build": "npm --prefix ../vendor/Typhoeus/mpris install && npm --prefix ../vendor/Typhoeus/mpris run build",
+    "dist": "npm run build && npm run mpris:build && electron-builder --linux AppImage"
   },
   "build": {
     "appId": "cn.ne0w0r1d.quaver",
@@ -37,6 +38,10 @@
       {
         "from": "../api-server/dist-bin/quaver-server",
         "to": "bin/quaver-server"
+      },
+      {
+        "from": "../vendor/Typhoeus/mpris/dist/mpris-daemon.cjs",
+        "to": "mpris/mpris-daemon.cjs"
       },
       {
         "from": "build-res/icon.png",
