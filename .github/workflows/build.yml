@@ -168,9 +168,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # sidecar 已随 extraResources 打进 AppImage，Release 只发客户端本体
       - uses: actions/download-artifact@v8
         with:
-          pattern: "quaver-*"
+          pattern: "quaver-appimage-*"
           merge-multiple: true
           path: out
 
@@ -179,9 +180,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -la out/
-          chmod +x out/quaver-server-* out/Quaver-*.AppImage 2>/dev/null || true
           # -R 显式指定仓库：此 job 无 checkout，gh 靠 git 推断仓库会 fatal
           gh release create "$GITHUB_REF_NAME" \
             -R "$GITHUB_REPOSITORY" \
             --generate-notes \
-            out/quaver-server-* out/Quaver-*.AppImage
+            out/Quaver-*.AppImage
