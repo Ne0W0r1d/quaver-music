@@ -48,9 +48,10 @@ button { font: inherit; }
 
 .frame { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; position: relative; }
 /* CSD（frame:false）：无标题栏、无浮窗。三按钮+抓握点平铺在窗口右上角，
-   容器底即拖拽区（双击最大化），按钮本体 no-drag。浏览器 dev 下同样可见（点击走占位事件）。 */
+   容器底即拖拽区（双击最大化），按钮本体 no-drag。浏览器 dev 下同样可见（点击走占位事件）。
+   top 下探到 ContentView 面板缘（y=10）之下：钮完全落在面板内，不压边框。 */
 .winbtns {
-  position: fixed; top: 8px; right: 10px; z-index: 90;
+  position: fixed; top: 18px; right: 12px; z-index: 90;
   display: flex; gap: 4px; padding: 2px;
   -webkit-app-region: drag; user-select: none;
 }
@@ -67,10 +68,10 @@ button { font: inherit; }
   color: var(--ink2); opacity: .55; cursor: grab;
 }
 .winbtns:active .win-grip { cursor: grabbing; }
-/* 顶缘隐形拖拽条：整窗顶部 8px 都是 drag 把手（双击=最大化切换），
-   右侧避开按钮簇（簇自身就是拖拽面，两条重叠会抢 hit-test）。 */
+/* 顶缘隐形拖拽条：整窗顶部 8px 都是 drag 把手（双击=最大化切换）。
+   与按钮簇（top:18）不在同一水平带，无重叠，铺满整缘即可。 */
 .win-dragtop {
-  position: fixed; top: 0; left: 0; right: 130px; height: 8px; z-index: 88;
+  position: fixed; top: 0; left: 0; right: 0; height: 8px; z-index: 88;
   -webkit-app-region: drag; cursor: grab; user-select: none;
 }
 
