@@ -51,10 +51,12 @@ def _purge_expired() -> None:
         _streams.pop(tok, None)
 
 
-async def resolve_stream(mid: str, media_mid: str | None, tier_id: str, auto: bool) -> dict:
+async def resolve_stream(mid: str, media_mid: str | None, tier_id: str, auto: bool,
+                         deprioritize: list[str] | None = None) -> dict:
     """协商 + 探测总长，发放中继 token。TyphoeusError 由上层 handler 归一。"""
     song = SongRef(mid=mid, media_mid=media_mid or mid)
-    resolved = await resolver.resolve(song, tier_id, auto_downgrade=auto)
+    resolved = await resolver.resolve(song, tier_id, auto_downgrade=auto,
+                                      deprioritize=tuple(deprioritize or ()))
     # 取 total：对 CDN 发 bytes=0-0，从 Content-Range 解析（不下载实体）
     up = await asyncio.to_thread(open_range, resolved.url, ByteRange(0, 0))
     total = 0

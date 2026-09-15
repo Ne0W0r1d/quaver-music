@@ -69,3 +69,30 @@ export function setDecor(m: DecorMode) {
 // —— 解码后端（当前仅持久化；接入多后端管线后由播放器读取生效） ——
 export function getDecode() { return localStorage.getItem(K_DECODE) || "FFmpeg"; }
 export function setDecode(v: string) { localStorage.setItem(K_DECODE, v); }
+
+// —— 音质 Fallback 排序：no-atmos=自动/回退时不优先落到臻品全景声（默认，母带优先），
+//    rank=按标准 rank 降序回退（全景声在其 rank 位置自然参与） ——
+const K_QFALLBACK = "quaver.qfallback.v1";
+export type FallbackSort = "no-atmos" | "rank";
+export function getFallbackSort(): FallbackSort {
+  return localStorage.getItem(K_QFALLBACK) === "rank" ? "rank" : "no-atmos";
+}
+export function setFallbackSort(v: FallbackSort) { localStorage.setItem(K_QFALLBACK, v); }
+
+// —— 关闭按钮行为：tray=缩放到托盘（默认）；quit=退出程序。CSD 胶囊与 SSD 标题栏共用。
+//    偏好经 Electron 桥同步到主进程（主进程拦截 window close 决定 hide 还是真退出）。 ——
+const K_CLOSEACT = "quaver.closeaction.v1";
+export type CloseAction = "tray" | "quit";
+export function getCloseAction(): CloseAction {
+  return localStorage.getItem(K_CLOSEACT) === "quit" ? "quit" : "tray";
+}
+export function setCloseAction(v: CloseAction) {
+  localStorage.setItem(K_CLOSEACT, v);
+  const bridge = (window as any).quaverCSD;
+  if (bridge?.setCloseAction) bridge.setCloseAction(v);
+}
+// 启动时把已存偏好推给主进程（Electron 壳层）；浏览器 dev 下为 no-op
+export function syncCloseAction() {
+  const bridge = (window as any).quaverCSD;
+  if (bridge?.setCloseAction) bridge.setCloseAction(getCloseAction());
+}

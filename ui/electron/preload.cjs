@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld("quaverCSD", {
   max: () => ipcRenderer.send("quaver:win", "max"),
   close: () => ipcRenderer.send("quaver:win", "close"),
   setDecor: (mode) => ipcRenderer.send("quaver:decor", mode),
+  // 关闭按钮行为偏好（tray=缩放到托盘 / quit=退出程序）同步给主进程
+  setCloseAction: (action) => ipcRenderer.send("quaver:close-action", action === "quit" ? "quit" : "tray"),
 });
 
 // MPRIS：渲染层 ↔ mpris daemon（经主进程中转，daemon 走 stdio NDJSON）。

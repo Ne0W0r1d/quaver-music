@@ -5,7 +5,7 @@ import { renderSongRows, loadLiked, type RowHooks } from "./lib/songs";
 import { player } from "./player";
 import {
   getTheme, setTheme, getDecor, setDecor, getUiFont, setUiFont, getLyricFont, setLyricFont,
-  getDecode, setDecode, FONT_LABELS,
+  getDecode, setDecode, FONT_LABELS, getFallbackSort, setFallbackSort, getCloseAction, setCloseAction,
 } from "./lib/prefs";
 
 const h = (tag: string, cls: string, html = "") => {
@@ -223,6 +223,13 @@ async function settingsView(root: HTMLElement) {
         <button class="opt-card" data-opt="ssd" type="button">系统标题栏（SSD）</button>
       </div>
 
+      <div class="set-sub">关闭按钮行为 <span class="muted set-subnote">- 点窗口右上角 ✕ 时（CSD/SSD 通用）</span></div>
+      <div class="opt-cards" id="close-cards">
+        <button class="opt-card" data-opt="tray" type="button">缩放到托盘</button>
+        <button class="opt-card" data-opt="quit" type="button">退出程序</button>
+      </div>
+      <p class="muted set-hint">缩放到托盘：窗口隐藏，播放与系统托盘图标继续，托盘菜单「退出」才结束程序。</p>
+
       <div class="set-sub">字体设置</div>
       <label class="set-field"><span>界面字体</span>
         <select id="font-ui">${fontOptions}</select></label>
@@ -250,6 +257,12 @@ async function settingsView(root: HTMLElement) {
       <div class="opt-cards" id="quality-grid">
         <button class="opt-card q" data-q="auto" type="button">自动</button>
       </div>
+      <div class="set-sub set-sub2">Fallback 排序 <span class="muted set-subnote">- 高档不可用时的降档顺序</span></div>
+      <div class="opt-cards" id="qfallback-cards">
+        <button class="opt-card" data-opt="no-atmos" type="button">不优先全景声</button>
+        <button class="opt-card" data-opt="rank" type="button">按标准排序</button>
+      </div>
+      <p class="muted set-hint">自动/降档时优先取到「臻品母带」，跳过「臻品全景声」（显式点选全景声不受影响）；「按标准排序」则回退链保持 rank 降序原样。</p>
       <p class="muted set-hint">档位即时生效（下一首起按新音质协商取链）。臻品母带/全景声等高档位仅限会员；本后端只流播明文档，不提供加密档（QMC）解密。</p>
     </section>
 
@@ -282,6 +295,18 @@ async function settingsView(root: HTMLElement) {
   const syncDecor = () => syncSel(decorBox, "opt", getDecor());
   decorBox.querySelectorAll<HTMLElement>("[data-opt]").forEach((b) => { b.onclick = () => { setDecor(b.dataset.opt as any); syncDecor(); }; });
   syncDecor();
+
+  // 关闭按钮行为：缩放到托盘 / 退出程序（Electron 桥同步主进程；浏览器 dev 无效果）
+  const closeBox = wrap.querySelector<HTMLElement>("#close-cards")!;
+  const syncClose = () => syncSel(closeBox, "opt", getCloseAction());
+  closeBox.querySelectorAll<HTMLElement>("[data-opt]").forEach((b) => { b.onclick = () => { setCloseAction(b.dataset.opt as any); syncClose(); }; });
+  syncClose();
+
+  // Fallback 排序：默认「不优先全景声」（母带优先，atmos51 压链尾兜底）；改动自下一首协商起生效
+  const fbBox = wrap.querySelector<HTMLElement>("#qfallback-cards")!;
+  const syncFb = () => syncSel(fbBox, "opt", getFallbackSort());
+  fbBox.querySelectorAll<HTMLElement>("[data-opt]").forEach((b) => { b.onclick = () => { setFallbackSort(b.dataset.opt as any); syncFb(); }; });
+  syncFb();
 
   // 字体：界面 / 歌词两族，写 CSS 变量即时生效
   const fu = wrap.querySelector<HTMLSelectElement>("#font-ui")!;

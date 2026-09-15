@@ -447,7 +447,6 @@ html:not([data-theme="dark"]) .ghost-btn.danger:hover { background: #fdecec; bor
 .sw-dark { background: #16181c; }
 .opt-card.q { padding: 8px 14px; border-radius: 999px; font-size: 13px; }
 .opt-card.q .q-lock { font-size: 10px; color: #ff8a3c; font-style: normal; }
-.q-badge { vertical-align: 1px; }
 #quality-grid { max-width: 452px; } /* 约束为 4+3 换行（对齐设计稿） */
 
 /* 字体/后端等「标签 + 下拉」行 */

@@ -1,5 +1,7 @@
 // Quaver — 浏览器侧 API 封装（全部走同源 /api 中继 → Python sidecar :3200）
 // 响应信封：{code:0,msg:"ok",data:...}；错误 {code:-1,msg:...} + HTTP 状态。
+import { getFallbackSort } from "./prefs";
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -68,7 +70,7 @@ export type Quality = keyof typeof QUALITIES;
 export function getQuality(): Quality | "auto" {
   const q = localStorage.getItem("quaver.quality.v1");
   if (q === "auto" || (q && q in QUALITIES)) return q as Quality | "auto";
-  return "128";
+  return "auto"; // 默认自动：协商到会员可及的最高档（臻品母带优先）
 }
 export function setQuality(q: Quality | "auto") {
   localStorage.setItem("quaver.quality.v1", q);
@@ -111,7 +113,7 @@ export interface StreamResult extends LastStream { url: string }
 
 const RESOLVE_TIMEOUT_MS = 12000; // 上游取链+嗅探偶发挂起：超时报错，让 UI 出可重试的错误态而不是永久转圈
 
-async function postResolve(body: { mid: string; media_mid: string; tier: string; auto: boolean }): Promise<StreamResolved> {
+async function postResolve(body: { mid: string; media_mid: string; tier: string; auto: boolean; deprioritize: string[] }): Promise<StreamResolved> {
   try {
     return await api<StreamResolved>("/stream/resolve", {
       method: "POST",
@@ -133,13 +135,15 @@ export async function resolveStreamUrl(song: any, quality: Quality | "auto" = ef
   const mediaId: string = song.file?.media_mid ?? song.media_mid ?? song.mid;
   let tier = quality as string;
   if (tier === "auto") tier = (await getStreamTiers()).max ?? "128";
+  // 回退排序开关（设置页）：默认不把「臻品全景声」当作优先降档落点（压到链尾兜底）
+  const deprioritize = getFallbackSort() === "no-atmos" ? ["atmos51"] : [];
   try {
-    const r = await postResolve({ mid: song.mid, media_mid: mediaId, tier, auto: true });
+    const r = await postResolve({ mid: song.mid, media_mid: mediaId, tier, auto: true, deprioritize });
     return { url: "/api" + r.path, tier: r.tier, label: r.tier_label, degraded: r.degraded };
   } catch (e: any) {
     // 目标档本身取不到（会员/加密在 auto 模式已被后端裁剪，走到这里多为无源/网络）→ 兜底标准档
     if (tier !== "128") {
-      const r = await postResolve({ mid: song.mid, media_mid: mediaId, tier: "128", auto: true });
+      const r = await postResolve({ mid: song.mid, media_mid: mediaId, tier: "128", auto: true, deprioritize });
       return { url: "/api" + r.path, tier: "128", label: "标准音质", degraded: true };
     }
     throw e;

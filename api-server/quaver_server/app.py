@@ -374,6 +374,7 @@ class StreamResolveBody(BaseModel):
     song_type: int = 0
     tier: str = "128"          # typhoeus.quality.TierId
     auto: bool = False         # true=自动音质模式（会员不足向下降档，不报 403）
+    deprioritize: list[str] = []  # 回退链降权档位（UI「回退排序」开关：如 atmos51 压到链尾）
 
 
 @app.get("/stream/tiers")
@@ -385,7 +386,7 @@ async def stream_tiers():
 @app.post("/stream/resolve")
 async def stream_resolve(body: StreamResolveBody):
     """协商一档明文流并换取中继 token；会员不足回 403，加密档回 451。"""
-    return ok(await resolve_stream(body.mid, body.media_mid, body.tier, body.auto))
+    return ok(await resolve_stream(body.mid, body.media_mid, body.tier, body.auto, body.deprioritize))
 
 
 @app.get("/stream/{token}")

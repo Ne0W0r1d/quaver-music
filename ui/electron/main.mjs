@@ -27,6 +27,13 @@ let decorMode = "csd";
 let rebuilding = false;
 let tray = null; // Linux 走 D-Bus StatusNotifierItem（KDE/GNOME 托盘）
 
+// 关闭按钮行为（渲染层 quaver:close-action 同步；默认缩放到托盘）：
+// tray = 拦截 window close 改 hide（CSD 胶囊、SSD 标题栏、Alt+F4 全部生效，托盘菜单可恢复）；
+// quit = 走默认关闭流程（window-all-closed → app.quit）。
+let closeAction = "tray";
+let quitting = false;
+app.on("before-quit", () => (quitting = true));
+
 // 菜单栏治理：CSD（frameless）下 Electron 会把默认菜单画成窗口顶部菜单条，直接摘掉；
 // SSD 还原默认菜单。不用 setMenuBarVisibility(false)——它不缩 Linux 的内容区（留一条空白）。
 function applyMenu() {
@@ -265,10 +272,26 @@ async function createWindow() {
   win.loadURL(url);
   win.webContents.on("did-finish-load", () => log("[quaver] page loaded OK"));
   win.webContents.on("did-fail-load", (_e, code, desc) => log("[quaver] load FAIL", code, desc));
+  win.on("close", (e) => {
+    // 缩放到托盘：任何路径的 close（胶囊✕/系统标题栏✕/Alt+F4）都改 hide；
+    // 重建窗口（decor 切换）、真退出（托盘菜单/quit 行为）时放行。
+    // 注意不因 tray 创建失败而放行 close：隐藏窗口仍可靠 second-instance/MPRIS raise 找回。
+    if (closeAction === "tray" && !quitting && !rebuilding) {
+      e.preventDefault();
+      winShown = false;
+      win?.hide();
+      log("[quaver] close -> hide (tray:", tray ? "ok" : "MISSING", ")");
+    }
+  });
   win.on("show", () => (winShown = true));
   win.on("hide", () => (winShown = false));
   win.on("closed", () => (win = null));
 }
+
+ipcMain.on("quaver:close-action", (_e, action) => {
+  closeAction = action === "quit" ? "quit" : "tray";
+  log("[quaver] close-action ->", closeAction);
+});
 
 ipcMain.on("quaver:win", (_e, action) => {
   if (!win) return;
@@ -313,7 +336,8 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
+    // 缩放到托盘时再次启动 = 唤回窗口（showWindow 处理 min/hidden 两种情况）
+    showWindow();
   });
 }
 // 勿用顶层 await：Electron 对 ESM 主进程中挂起在 await 的模块引导不完整（实测 whenReady 永不兑现）

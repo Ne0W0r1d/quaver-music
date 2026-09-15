@@ -5,6 +5,7 @@
 // 音量：浮窗形式 —— 悬停/点击静音按钮弹出玻璃小窗，静音图标 + 滑杆 + 读数一体
 import { player } from "../player";
 import { coverUrl, getLastStream, getStreamTiers, getSessionQuality, effectiveQuality, QUALITY_SHORT, QUALITIES, type Quality } from "../lib/api";
+// getLastStream 仍由 paintQ 使用（胶囊显示实际已应用档位）
 import { fmtDur } from "../lyric";
 import { icons } from "../lib/icons";
 import { extractCoverColor, toBarColors } from "../lib/color";
@@ -222,11 +223,9 @@ export function PlayerBar(): HTMLElement {
   player.on(() => {
     const s = player.current;
     title.textContent = s?.name ?? "未在播放";
-    const ls = getLastStream();
-    const tierBadge = s && ls && ls.tier !== "128"
-      ? ` <i class="badge green q-badge">${ls.degraded ? "→" : ""}${ls.label}</i>` : "";
+    // 实际档位不在这里展示：播放条右侧的可选音质胶囊（paintQ）已承载「已应用档位」信息
     sub.innerHTML = s
-      ? ((s.singer ?? []).map((x) => x.name).join(" / ") + tierBadge)
+      ? (s.singer ?? []).map((x) => x.name).join(" / ")
       : "点一首歌试试";
     const pic = s ? coverUrl(s, 150) : "";
     cover.innerHTML = pic ? `<img src="${pic}" alt=""/>` : "";
