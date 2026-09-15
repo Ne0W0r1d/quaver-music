@@ -121,15 +121,19 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
+      # 顺序要紧：submodule 必须先 init，再往仓库里放产物，
+      # 否则 checkout 后 vendor/Typhoeus 空目录被 sidecar 填充，submodule update
+      # 会拒绝 clone 进非空目录（"already exists and is not an empty directory"）。
+      # MPRIS 守护进程源码也在该 submodule（mpris/），esbuild 产物供 extraResources。
+      - name: Init Typhoeus submodule
+        run: git submodule update --init --depth 1 vendor/Typhoeus
+
+      # sidecar 产物落仓库根 dist-bin/（.gitignore 已覆盖），不再碰 submodule 路径
       - name: Fetch sidecar for this arch
         uses: actions/download-artifact@v8
         with:
           name: quaver-server-linux-${{ matrix.arch_label }}
-          path: vendor/Typhoeus/dist-bin
-
-      # MPRIS 守护进程源码在 Typhoeus submodule（mpris/），esbuild 单文件产物供 extraResources
-      - name: Init Typhoeus submodule
-        run: git submodule update --init --depth 1 vendor/Typhoeus
+          path: dist-bin
 
       - name: Build MPRIS daemon bundle
         working-directory: vendor/Typhoeus/mpris
@@ -139,7 +143,7 @@ jobs:
 
       # extraResources 里约定文件名是 quaver-server
       - name: Stage sidecar
-        working-directory: vendor/Typhoeus/dist-bin
+        working-directory: dist-bin
         run: |
           mv quaver-server-${{ matrix.arch_label }} quaver-server
           chmod +x quaver-server

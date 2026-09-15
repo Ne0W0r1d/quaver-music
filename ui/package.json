@@ -36,7 +36,7 @@
     ],
     "extraResources": [
       {
-        "from": "../vendor/Typhoeus/dist-bin/quaver-server",
+        "from": "../dist-bin/quaver-server",
         "to": "bin/quaver-server"
       },
       {
