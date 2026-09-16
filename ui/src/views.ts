@@ -2,6 +2,7 @@
 // 视图函数: async (root, query) => cleanup?
 import { api, upPic, getQuality, setQuality, setSessionQuality, getStreamTiers, identityBadges } from "./lib/api";
 import { renderSongRows, loadLiked, type RowHooks } from "./lib/songs";
+import { getMyMusicid, isFavSonglist, loadFavSonglists, onFavSonglistsChange, toggleFavSonglist } from "./lib/favs";
 import { pushHistory } from "./components/SearchBox";
 import { player } from "./player";
 import {
@@ -26,6 +27,8 @@ export const BACK_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="n
 // 返回按钮不在这里——统一挂在壳层顶带（搜索框旁，见 shell.ts）。
 function mountHead(root: HTMLElement, opts: {
   artHtml: string; artRound?: boolean; name: string; meta: string; desc: string;
+  /** 信息头行动区（如歌单页的收藏按钮），挂在简介下方 */
+  actions?: HTMLElement | null;
 }) {
   const head = h("div", "pl-head");
   head.innerHTML = `
@@ -35,6 +38,11 @@ function mountHead(root: HTMLElement, opts: {
       <div class="pl-meta">${escHtml(opts.meta)}</div>
       <div class="pl-desc muted">${escHtml(opts.desc)}</div>
     </div>`;
+  if (opts.actions) {
+    const box = h("div", "pl-actions");
+    box.append(opts.actions);
+    head.querySelector<HTMLElement>(".pl-info")!.append(box);
+  }
   root.append(head);
   const desc = head.querySelector<HTMLElement>(".pl-desc")!;
   if (opts.desc) {
@@ -73,6 +81,54 @@ async function homeView(root: HTMLElement) {
   if (!list.length) grid.innerHTML = `<div class="muted">暂无推荐</div>`;
 }
 
+// —— 歌单页收藏按钮（在线收藏写接口：PlaylistFavWrite Fav/CancelFavPlaylist） ——
+// 收藏态取自 lib/favs 的收藏歌单缓存（与侧栏同源，收藏后侧栏同帧出现）；
+// 自有歌单不渲染（不能收藏自己的歌单），未登录不渲染（收藏必须带登录态）。
+async function favSonglistButton(meta: {
+  id: string; title: string; picurl?: string; songnum?: number; creatorMusicid?: number;
+}): Promise<HTMLElement | null> {
+  const myId = await getMyMusicid();
+  if (!myId) return null;
+  if (meta.creatorMusicid && Number(meta.creatorMusicid) === myId) return null;
+  // 收藏列表没拉到（未登录/上游失败）也照常给按钮：点击时写接口会给出真实错误
+  await loadFavSonglists().catch(() => [] as any[]);
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "fav-btn";
+  btn.dataset.plid = meta.id;
+  const paint = () => {
+    const on = isFavSonglist(meta.id);
+    btn.classList.toggle("on", on);
+    btn.innerHTML = `<span class="fb-ic">${on ? "♥" : "♡"}</span><span>${on ? "已收藏" : "收藏"}</span>`;
+    btn.title = on ? "从我的收藏中移除" : "收藏这首歌单";
+  };
+  paint();
+  btn.onclick = async () => {
+    const off = onFavSonglistsChange(() => { if (!btn.dataset.fail) paint(); });
+    btn.disabled = true;
+    try {
+      await toggleFavSonglist({ id: meta.id, title: meta.title, picurl: meta.picurl, songnum: meta.songnum });
+    } catch (e: any) {
+      console.warn("收藏歌单失败", e);
+      btn.dataset.fail = "1";
+      btn.classList.add("failed");
+      btn.setAttribute("title", String(e?.message ?? e));
+      btn.innerHTML = `<span class="fb-ic">!</span><span>收藏失败</span>`;
+      window.setTimeout(() => {
+        delete btn.dataset.fail;
+        btn.classList.remove("failed");
+        paint();
+      }, 2600);
+    } finally {
+      btn.disabled = false;
+      off();
+      if (!btn.dataset.fail) paint();
+    }
+  };
+  return btn;
+}
+
 // —— 歌单页：信息头（封面/标题/制作人/描述）+ 歌曲列表（分页拉全） ——
 async function playlistView(root: HTMLElement, q: URLSearchParams) {
   const name = q.get("name") || "歌单";
@@ -83,6 +139,8 @@ async function playlistView(root: HTMLElement, q: URLSearchParams) {
 
   let info: any = null;
   const songs: any[] = [];
+  // 收藏态与自身音乐号跟歌单详情并行取，信息头渲染时按钮已就绪（不等额外往返）
+  const favsReady = Promise.all([getMyMusicid(), loadFavSonglists().catch(() => [])]);
   try {
     for (let page = 1; ; page++) {
       const d: any = await api(`/songlist/${id}/detail?page=${page}&num=100`);
@@ -98,11 +156,19 @@ async function playlistView(root: HTMLElement, q: URLSearchParams) {
 
   const logo = upPic(info?.picurl || "");
   const metaParts = [info?.creator?.nick ? `${info.creator.nick} 制作` : "", info?.songnum ? `${info.songnum} 首` : ""].filter(Boolean);
+  await favsReady.catch(() => {});
   mountHead(root, {
     artHtml: logo ? `<img src="${logo}" alt=""/>` : "",
     name: info?.title ?? name,
     meta: metaParts.join(" · "),
     desc: info?.desc || "",
+    actions: await favSonglistButton({
+      id,
+      title: info?.title ?? name,
+      picurl: logo,
+      songnum: info?.songnum,
+      creatorMusicid: info?.creator?.musicid,
+    }).catch(() => null),
   });
 
   const rows = h("div", "rows");
@@ -335,18 +401,45 @@ async function dailyView(root: HTMLElement) {
   }
 }
 
+/** 两次预载列表是否同一批曲（同序同 mid）：一样就不重画，避免打断滚动 */
+const sameMids = (a: any[], b: any[]) => a.length === b.length && a.every((x, i) => x.mid === b[i]?.mid);
+
 async function likedView(root: HTMLElement) {
   root.append(h("h1", "page-title", "我喜欢 "));
   const cnt = h("span", "muted cnt");
   root.querySelector("h1")!.append(cnt);
   const box = h("div", "rows", `<div class="muted">加载中…</div>`);
   root.append(box);
-  try {
-    const songs = await loadLiked(box, { onPlay: (s, i, all) => player.playList(all, i) });
-    cnt.textContent = songs.length ? `· ${songs.length} 首` : "";
-  } catch (e: any) {
-    box.innerHTML = `<div class="muted">${e.message} — 需要先登录</div>`;
+
+  let shown = 0; // 标题计数（服务端 total 优先：超预载上限时也报真实总数）
+  const setCount = (n: number) => { shown = Math.max(0, n); cnt.textContent = shown ? `· ${shown} 首` : ""; };
+  // 取消收藏：行淡出后移出本页 + 计数 -1。只在写接口确认后调用——失败已在 player 侧回滚，不会触发
+  const dropRow = (song: any) => {
+    const key = String(song._key ?? song.mid ?? "");
+    const row = key ? box.querySelector<HTMLElement>(`.row[data-songkey="${CSS.escape(key)}"]`) : null;
+    if (!row || row.classList.contains("leaving")) return;
+    row.classList.add("leaving");
+    setCount(shown - 1);
+    setTimeout(() => row.remove(), 220);
+  };
+  const paint = (songs: any[]) => {
+    setCount(Math.max(songs.length, player.likedTotal));
+    renderSongRows(box, songs, {
+      onPlay: (s, i, all) => player.playList(all, i),
+      onLove: (song, on) => { if (!on) dropRow(song); }, // 取消红心 = 取消单曲收藏 + 移出本页
+    });
+  };
+
+  // 预载命中（开机已拉回）：首帧直接出，红心默认全部点亮；随后按 TTL 后台对账，内容变了才重画
+  const cached = player.likedCache as any[] | null;
+  if (cached) paint(cached);
+  const ok = await player.loadLoved();
+  if (!ok) {
+    if (!cached) box.innerHTML = `<div class="muted">加载失败 — 需要先登录</div>`;
+    return;
   }
+  const fresh: any[] = player.likedCache ?? [];
+  if (!cached || !sameMids(cached, fresh)) paint(fresh);
 }
 
 // —— 设置页（对齐设计稿：外观设置 / 播放设置 / 调试 三区；不触碰侧栏与播放条） ——

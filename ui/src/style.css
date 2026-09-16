@@ -113,8 +113,15 @@ button { font: inherit; }
 .pl:hover { background: var(--hover); }
 .pl .thumb { width: 32px; height: 32px; flex: 0 0 auto; border-radius: 6px; background: var(--ph2); overflow: hidden; }
 .pl .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.pname { font-size: 13px; color: var(--ink3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pname { min-width: 0; display: flex; flex-direction: column; gap: 1px; font-size: 13px; color: var(--ink3); }
+.pl .ptitle, .pl .psub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl .psub { font-size: 11px; color: var(--idx); }
 .pl-empty { color: var(--idx); font-size: 12px; padding: 8px; }
+/* 侧栏歌单分组标题（我创建的歌单 / 收藏的歌单）：随列表滚动，只作分区不吸顶 */
+.pl-group { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 7px 3px;
+  font-size: 11px; font-weight: 700; color: var(--idx); }
+.pl-group:first-child { padding-top: 2px; }
+.pl-cnt { font-weight: 500; }
 
 .settings { margin-top: auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 9px; color: var(--ink3); }
 .settings:hover { background: var(--hover); }
@@ -250,6 +257,21 @@ body:not(.ssd) .content-top::before, body:not(.ssd) .content-top::after { flex-b
   font-size: 12px; cursor: pointer; transition: border-color .12s, color .12s;
 }
 .pl-expand:hover { border-color: var(--acc); color: var(--acc); }
+/* 信息头行动区（歌单页收藏按钮）；自有歌单/未登录不渲染该行 */
+.pl-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.fav-btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 16px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  font-size: 13px; cursor: pointer; transition: border-color .12s, background .12s, color .12s;
+}
+.fav-btn:hover:not(:disabled) { border-color: var(--ink2); }
+.fav-btn .fb-ic { font-size: 14px; line-height: 1; color: var(--idx); }
+/* 已收藏：红心红框（与行内单曲红心 .row-love.on 同色） */
+.fav-btn.on { border-color: #e8465a; color: #e8465a; }
+.fav-btn.on .fb-ic { color: #e8465a; }
+.fav-btn:disabled { opacity: .6; cursor: default; }
+.fav-btn.failed { border-color: #d33; color: #e66; }
+html:not([data-theme="dark"]) .fav-btn.failed { background: #fdecec; border-color: #f3b4b4; color: #c62828; }
 /* 歌手页分区标题（热门歌曲/最新发布/专辑）：比信息头大名字小一档 */
 .sec-title { margin: 22px 0 10px; font-size: 16px; font-weight: 800; color: var(--ink); }
 /* 分区标题行（标题 + 右侧「查看全部」链接，如歌手页专辑区） */
@@ -290,6 +312,8 @@ body:not(.ssd) .content-top::before, body:not(.ssd) .content-top::after { flex-b
 .row:hover .row-love, .row .row-love.on { opacity: 1; }
 .row .row-love:hover { background: var(--press); }
 .row .row-love.on { color: #e8465a; }
+/* 取消收藏后行淡出移除（我喜欢页：取消红心 = 取消单曲收藏 + 移出本页） */
+.row.leaving { opacity: 0; transform: translateX(-10px); transition: opacity .2s ease, transform .2s ease; pointer-events: none; }
 .row .dur { width: 40px; text-align: right; color: var(--idx); font-size: 12px; flex: 0 0 auto; }
 
 /* ===================== 底部播放条（.frame 流内固定行：任何窗口高度都必然可见，

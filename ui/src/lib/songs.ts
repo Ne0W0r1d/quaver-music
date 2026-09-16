@@ -7,9 +7,37 @@ export interface RowHooks {
   // 点击行内歌手/专辑链接跳视图
   showArtist?: boolean;
   showAlbum?: boolean;
+  /** 红心切换落定后回调（loved = 写接口终态，失败已在 player 侧回滚）。
+   *  「我喜欢」页据此把取消收藏的行移出列表。 */
+  onLove?: (song: any, loved: boolean) => void;
 }
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+// —— 行内红心：与 player.loved（单一真相源）同步 ——
+function paintLove(btn: HTMLElement, on: boolean) {
+  btn.textContent = on ? "♥" : "♡";
+  btn.classList.toggle("on", on);
+  btn.setAttribute("aria-pressed", String(on));
+  btn.title = on ? "取消收藏" : "收藏";
+}
+
+/** 按当前收藏态原地重画已挂载的行内红心（开机预载落定 / 别处取消收藏后调用） */
+export function syncRowHearts(root: ParentNode = document) {
+  root.querySelectorAll<HTMLElement>(".row[data-songkey] > [data-love]").forEach((btn) => {
+    const row = btn.closest<HTMLElement>(".row[data-songkey]");
+    paintLove(btn, !!row && player.loved.has(row.dataset.songkey!));
+  });
+}
+
+// 收藏态一变（预载灌满 / 播放条取消 / 别处点赞）→ 已渲染的行原地跟随，不必等切视图。
+// 按版本号去重：player.notify 每次 timeupdate 都会来，不能在这空刷几百行。
+let paintedLoveVersion = -1;
+player.on(() => {
+  if (player.loveVersion === paintedLoveVersion) return;
+  paintedLoveVersion = player.loveVersion;
+  syncRowHearts();
+});
 
 function linkTo(kind: "singer" | "album", o: any, label: string): string {
   if (!o?.mid) return esc(label);
@@ -32,7 +60,7 @@ export function renderSongRows(box: HTMLElement, songs: any[], hooks: RowHooks =
     row.innerHTML = `<span class="idx">${i + 1}</span>
       <span class="rthumb">${pic ? `<img src="${pic}" alt="" loading="lazy"/>` : ""}</span>
       <span class="rmeta"><span class="rt" style="display:block">${esc(s.name ?? "")}</span>${artistLine}${albumLine}</span>
-      <button class="row-love${loved ? " on" : ""}" data-love aria-label="收藏">${loved ? "♥" : "♡"}</button>
+      <button class="row-love${loved ? " on" : ""}" data-love aria-label="收藏" aria-pressed="${loved}" title="${loved ? "取消收藏" : "收藏"}">${loved ? "♥" : "♡"}</button>
       <span class="dur">${fmtTime(s.interval)}</span>`;
 
     // 单击 = 选中 + 后台预加载播放链接（释放旧预载）；双击 = 打断切歌立即播放
@@ -48,13 +76,14 @@ export function renderSongRows(box: HTMLElement, songs: any[], hooks: RowHooks =
     });
     // 触屏/快速点按场景兜底：单击封面 = 选中 + 预加载（不直接起播，防误触；双击起播）
     row.querySelector(".rthumb")!.addEventListener("click", () => player.prefetchSong(s));
-    row.querySelector("[data-love]")!.addEventListener("click", (e) => {
+    row.querySelector("[data-love]")!.addEventListener("click", async (e) => {
       e.stopPropagation();
-      player.toggleLove(s);
-      const on = player.loved.has(s.mid);
       const btn = e.currentTarget as HTMLElement;
-      btn.textContent = on ? "♥" : "♡";
-      btn.classList.toggle("on", on);
+      const done = player.toggleLove(s); // 先乐观改态并广播（同步段），再等在线写接口
+      paintLove(btn, player.loved.has(s.mid));
+      const fin = await done;            // 终态：写失败已回滚
+      if (fin !== null) paintLove(btn, fin);
+      hooks.onLove?.(s, fin ?? player.loved.has(s.mid));
     });
     // 歌手/专辑跳转（事件委托到行；拼 hash 进对应视图）
     row.addEventListener("click", (e) => {

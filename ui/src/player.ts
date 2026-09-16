@@ -1,6 +1,6 @@
 // Quaver — 全局播放器状态机（常驻于 SPA 壳层，跨视图不销毁，音频不中断）
 // 订阅式：任何状态变化 notify 所有 UI（播放条 / 正在播放页 / 队列面板）。
-import { api, postJson, coverUrl, resolveStreamUrl, effectiveQuality, getSessionQuality, setSessionQuality, setLastStream, type StreamResult } from "./lib/api";
+import { api, postJson, coverUrl, resolveStreamUrl, effectiveQuality, getSessionQuality, setSessionQuality, setLastStream, writeSongType, type StreamResult } from "./lib/api";
 import { parseLrc, type LyricLine } from "./lyric";
 
 export type Song = {
@@ -23,12 +23,29 @@ const VOL_KEY = "quaver.volume.v1";
 const MUTE_KEY = "quaver.muted.v1";
 const TRANS_KEY = "quaver.showTrans.v1";
 
+// 「我喜欢」(dirid=201) 预载：每页条数 + 总上限（防超大歌单一口气拉爆首屏），
+// 以及预载结果的新鲜期——期内视图直接吃缓存，过期才回源对账。
+// 页尽量大：上游分页读带缓存，跨页拼接偶发「页码错位少一首」，单请求拿全最稳（500 首 ≈ 700KB）。
+const LOVED_PAGE = 500;
+const LOVED_MAX = 1000;
+const LOVED_TTL = 60_000;
+
 class Player {
   audio = new Audio();
   queue: Song[] = [];
   index = -1;
   mode: Mode = "all";
   loved = new Set<string>(JSON.parse(localStorage.getItem(LS_KEY) ?? "[]"));
+  /** 红心态版本号：每次变更 +1（UI 侧据此去重，避免 notify 空转重画几百行） */
+  loveVersion = 0;
+  /** 「我喜欢」预载的歌曲列表（视图首帧直接渲染，不再空转一轮分页拉取） */
+  likedCache: Song[] | null = null;
+  /** 我喜欢总曲数（服务端 total；被 LOVED_MAX 截断时用于展示） */
+  likedTotal = 0;
+  /** mid → 收藏写接口所需引用：song_id + 读接口的 song_type（预载回填；行对象缺 id 时兜底） */
+  private lovedRef = new Map<string, { id: number; type: number }>();
+  private likedAt = 0;                       // 预载完成时刻（LOVED_TTL 判新鲜）
+  private likedFlight: Promise<boolean> | null = null; // 飞行中的预载（并发共享）
   lyrics: LyricLine[] = [];
   lyricState: "idle" | "loading" | "ok" | "none" = "idle";
   loading = false; // 正在取链/缓冲（UI 画加载指示）
@@ -296,22 +313,95 @@ class Player {
     this.notify();
   }
 
-  toggleLove(song?: Song) {
-    const mid = song?.mid;
-    if (!mid || !song?.id) return;
-    const on = !this.loved.has(mid);
-    // 乐观更新（QQ 服务端写失败时回滚并提示）
-    if (on) this.loved.add(mid); else this.loved.delete(mid);
+  // —— 单曲收藏（红心）：本地「我喜欢」是全站红心的唯一真相源 ——
+
+  private persistLoved() {
     localStorage.setItem(LS_KEY, JSON.stringify([...this.loved]));
-    this.notify();
-    void postJson(on ? "/song/like" : "/song/unlike", { song_id: song.id, song_type: song.type ?? 0 })
+  }
+
+  /** 红心态唯一写入口（渲染读 this.loved，落盘走这里） */
+  private setLoved(mid: string, on: boolean, ref?: { id: number; type: number }) {
+    if (on) {
+      this.loved.add(mid);
+      if (ref) this.lovedRef.set(mid, ref);
+    } else this.loved.delete(mid);
+    this.loveVersion++;
+    this.persistLoved();
+  }
+
+  /** 「我喜欢」预载：分页拉全收藏的单曲 → 灌满红心态（各视图默认点亮）+ 缓存列表。
+   *  - 幂等：飞行中共享同一次请求；fresh=false 且缓存未过期（LOVED_TTL）直接复用。
+   *  - 拉全了整体以服务端为准；被 LOVED_MAX 截断时只做并集，不误灭本地已亮红心。
+   *  - 失败不清空红心态（未登录/上游抖动时保留本地缓存），返回是否成功。 */
+  loadLoved(fresh = false): Promise<boolean> {
+    if (this.likedFlight) return this.likedFlight;
+    if (!fresh && this.likedCache && Date.now() - this.likedAt < LOVED_TTL) return Promise.resolve(true);
+    let flight!: Promise<boolean>;
+    flight = (async () => {
+      const all: Song[] = [];
+      let total = 0;
+      for (let page = 1; all.length < LOVED_MAX; page++) {
+        const r: any = await api(`/user/liked?page=${page}&num=${LOVED_PAGE}`);
+        const batch: Song[] = r?.songs ?? [];
+        if (page === 1) total = Number(r?.total ?? 0);
+        all.push(...batch);
+        if (!r?.hasmore || !batch.length) break;
+      }
+      const mids = new Set<string>();
+      for (const s of all) {
+        if (!s?.mid) continue;
+        mids.add(s.mid);
+        if (s.id) this.lovedRef.set(s.mid, { id: s.id, type: s.type ?? 1 }); // 存读侧原值，写时再转写侧枚举
+      }
+      if (all.length >= total) this.loved = mids;
+      else for (const m of mids) this.loved.add(m);
+      this.likedCache = all;
+      this.likedTotal = total || all.length;
+      this.likedAt = Date.now();
+      this.loveVersion++;
+      this.persistLoved();
+      this.notify();
+      return true;
+    })()
       .catch((e) => {
-        console.warn("收藏同步失败", e);
-        if (on) this.loved.delete(mid); else this.loved.add(mid);
-        localStorage.setItem(LS_KEY, JSON.stringify([...this.loved]));
-        this.error = "收藏失败：" + (e?.message ?? e);
-        this.notify();
-      });
+        console.warn("「我喜欢」预载失败（保留本地红心态）", e);
+        return false;
+      })
+      .finally(() => { if (this.likedFlight === flight) this.likedFlight = null; });
+    this.likedFlight = flight;
+    return flight;
+  }
+
+  /** 切换单曲收藏（红心）：乐观更新、失败回滚，返回写接口终态（null = 缺少 song_id 无从下手）。
+   *  取消收藏同样走在线 unlike 接口，「我喜欢」缓存同步移出该曲。 */
+  async toggleLove(song?: Song): Promise<boolean | null> {
+    const mid = song?.mid;
+    if (!mid) return null;
+    // 行对象可能来自不带数字 id 的上下文（如专辑曲目）：回落到预载时记下的 song_id
+    const ref = song.id ? { id: song.id, type: song.type ?? 1 } : this.lovedRef.get(mid);
+    if (!ref) return null;
+    const on = !this.loved.has(mid);
+    this.setLoved(mid, on, ref);
+    this.notify();
+    try {
+      await postJson(on ? "/song/like" : "/song/unlike",
+        { song_id: ref.id, song_type: writeSongType(ref.type) });
+    } catch (e: any) {
+      console.warn("收藏同步失败", e);
+      this.setLoved(mid, !on, ref); // 回滚
+      this.error = "收藏失败：" + (e?.message ?? e);
+      this.notify();
+      return !on;
+    }
+    // 缓存与列表计数跟进（写接口已确认，视图据此即时自洽）
+    if (on) {
+      if (this.likedCache && !this.likedCache.some((x) => x.mid === mid)) this.likedCache.unshift(song!);
+      this.likedTotal++;
+    } else {
+      if (this.likedCache) this.likedCache = this.likedCache.filter((x) => x.mid !== mid);
+      if (this.likedTotal > 0) this.likedTotal--;
+    }
+    return on;
   }
 
   /** 高亮当前页面对应的歌曲行（.playing 类），与旧行为一致 */

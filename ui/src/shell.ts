@@ -5,6 +5,7 @@
 // （file:// 与壳层加载均兼容），旧的多页入口（daily.html 等）保留为薄跳转层。
 import "./style.css";
 import { api, coverUrl, upPic, identityBadges } from "./lib/api";
+import { favSonglists, loadFavSonglists, onFavSonglistsChange } from "./lib/favs";
 import { player } from "./player";
 import { PlayerBar } from "./components/PlayerBar";
 import { NowPlaying } from "./components/NowPlaying";
@@ -190,10 +191,50 @@ export function bootShell() {
 }
 
 // 侧栏状态（头像/昵称/会员徽章/歌单）
+// 歌单分两团：我创建的歌单（PlaylistBaseRead）+ 收藏的歌单（PlaylistFavRead，见 lib/favs）。
+// 后者独立拉取、失败只影响本团；收藏态变化（歌单页红心）经 favs 订阅即时回灌侧栏。
+let sidebarCreated: any[] = [];
+let sidebarFavsReady = false;
+
+const esc = (s: unknown) =>
+  String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+// 单个歌单条目：封面 + 标题（副行可选，收藏的歌单用来标创建者）
+function plItem(x: any, sub = ""): HTMLElement {
+  const a = document.createElement("a");
+  a.className = "pl";
+  const pic = upPic(x.picurl || x.bigpic_url);
+  a.innerHTML = `<span class="thumb">${pic ? `<img src="${pic}" alt="" loading="lazy"/>` : ""}</span>
+    <span class="pname"><span class="ptitle">${esc(x.title ?? "歌单")}</span>${sub ? `<span class="psub">${esc(sub)}</span>` : ""}</span>`;
+  a.href = `#/playlist?id=${encodeURIComponent(x.id ?? "")}&name=${encodeURIComponent(x.title ?? "歌单")}`;
+  return a;
+}
+
+function renderSidebarPlaylists(box: HTMLElement) {
+  const favs = sidebarFavsReady ? favSonglists() : null; // null = 尚未拉回：不画空态，避免闪一下「暂无」
+  box.innerHTML = "";
+  if (!sidebarCreated.length && !favs?.length) {
+    box.innerHTML = `<div class="pl-empty">暂无歌单</div>`;
+    return;
+  }
+  const group = (label: string, list: any[], sub: (x: any) => string) => {
+    if (!list.length) return;
+    const head = document.createElement("div");
+    head.className = "pl-group";
+    head.innerHTML = `<span>${label}</span><span class="pl-cnt">${list.length}</span>`;
+    box.append(head);
+    for (const x of list) box.append(plItem(x, sub(x)));
+  };
+  group("我创建的歌单", sidebarCreated, () => "");
+  group("收藏的歌单", favs ?? [], (x) => (x.nickname ? `${x.nickname} 创建` : ""));
+}
+
 async function bootSidebar() {
   try {
     const st: any = await api("/login/status");
     if (!st?.logged_in) return; // 未登录：保持占位样式
+    // 「我喜欢」预载：全站红心态（行内红心/播放条）都读它，登录确认后立刻后台拉回，不阻塞首屏
+    void player.loadLoved();
     const [me, vip] = await Promise.all([
       api<any>("/user/me").catch(() => null),
       api<any>("/user/vip").catch(() => null),
@@ -210,17 +251,15 @@ async function bootSidebar() {
 
     // 我喜欢（dirid=201 固定）不进歌单列表——导航栏已有入口
     const pl: any = await api("/user/created-songlists").catch(() => null);
+    sidebarCreated = (pl?.playlists ?? []).filter((p: any) => p.dirid !== 201);
     const box = document.getElementById("playlists")!;
-    box.innerHTML = "";
-    for (const x of (pl?.playlists ?? []).filter((p: any) => p.dirid !== 201)) {
-      const a = document.createElement("a");
-      a.className = "pl";
-      const pic = upPic(x.picurl || x.bigpic_url);
-      a.innerHTML = `<span class="thumb">${pic ? `<img src="${pic}" alt="" loading="lazy"/>` : ""}</span><span class="pname">${x.title ?? "歌单"}</span>`;
-      a.href = `#/playlist?id=${encodeURIComponent(x.id ?? "")}&name=${encodeURIComponent(x.title ?? "歌单")}`;
-      box.append(a);
-    }
-    if (!box.children.length) box.innerHTML = `<div class="pl-empty">暂无歌单</div>`;
+    renderSidebarPlaylists(box);
+
+    // 收藏的歌单：与创建列表分开拉（未登录/上游失败都不影响已有内容）
+    onFavSonglistsChange(() => renderSidebarPlaylists(box));
+    loadFavSonglists()
+      .catch(() => {})
+      .finally(() => { sidebarFavsReady = true; renderSidebarPlaylists(box); });
   } catch (e) {
     console.warn("sidebar boot failed", e);
   }
