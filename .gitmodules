@@ -1,6 +1,6 @@
-[submodule "vendor/QQMusicApi"]
+[submodule "Ne0W0r1d/QQMusicApi"]
 	path = vendor/QQMusicApi
-	url = https://github.com/L-1124/QQMusicApi
+	url = https://github.com/Ne0W0r1d/QQMusicApi
 	shallow = true
 
 [submodule "ne0w0r1d/quaver-typhoeus"]

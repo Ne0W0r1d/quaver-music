@@ -10,7 +10,7 @@ import { PlayerBar } from "./components/PlayerBar";
 import { NowPlaying } from "./components/NowPlaying";
 import { QueuePanel } from "./components/QueuePanel";
 import { SearchBox } from "./components/SearchBox";
-import { views } from "./views";
+import { views, BACK_SVG } from "./views";
 
 export const nav = [
   { path: "#/", label: "首页", icon: "home" },
@@ -44,9 +44,27 @@ export function currentRoute() {
 
 let mountedCleanup: (() => void) | null = null;
 
+// —— 顶带返回按钮（搜索框旁）：自维护的路由栈判定「有没有可返回的上级」，
+// 不依赖浏览器 history.length（其它标签/窗口共享计数、file:// 下语义不一）。
+// hash 赋值（location.hash=… / <a href="#…">）走 hashchange = 新导航压栈；
+// 真·返回（我们按钮的 history.back() 或鼠标侧键）落在栈的相邻项上 → 移动指针。
+const routeStack: string[] = [];
+let stackPos = -1;
+let backBtn: HTMLButtonElement | null = null;
+
+function syncRouteStack() {
+  const cur = location.hash || "#/";
+  if (stackPos >= 0 && routeStack[stackPos] === cur) { /* 同址刷新视图：不动栈 */ }
+  else if (stackPos > 0 && routeStack[stackPos - 1] === cur) stackPos--;      // 返回
+  else if (stackPos < routeStack.length - 1 && routeStack[stackPos + 1] === cur) stackPos++; // 前进
+  else { routeStack.splice(stackPos + 1); routeStack.push(cur); stackPos = routeStack.length - 1; }
+  if (backBtn) backBtn.hidden = stackPos <= 0;
+}
+
 export async function renderRoute() {
   if (!state.route) return;
   const { path, query } = currentRoute();
+  syncRouteStack();
   // 导航高亮
   document.querySelectorAll<HTMLElement>(".nav a").forEach((a) => {
     const p = a.dataset.route || "/";
@@ -129,7 +147,22 @@ export function bootShell() {
   state.route = frame.querySelector<HTMLElement>("#route")!;
   // 搜索框常驻壳层顶带（.content-top，与 CSD 按钮簇同一水平带）：路由切换/视图刷新只重建 #route，
   // 它不动；顶带把标题行整个让给页面内容，窄窗口下不再互相遮挡。
-  state.content.querySelector<HTMLElement>(".content-top")!.append(SearchBox());
+  // 返回按钮 = 搜索框的兄弟节点（同一个居中组里），没有可返回的上级时隐藏（syncRouteStack）。
+  const top = state.content.querySelector<HTMLElement>(".content-top")!;
+  const topCenter = document.createElement("div");
+  topCenter.className = "top-center";
+  backBtn = document.createElement("button");
+  backBtn.className = "top-back";
+  backBtn.type = "button";
+  backBtn.setAttribute("aria-label", "返回上级");
+  backBtn.title = "返回上级";
+  backBtn.innerHTML = BACK_SVG;
+  backBtn.hidden = true;
+  backBtn.onclick = () => {
+    if (stackPos > 0) { stackPos--; history.back(); } // renderRoute/hashchange 不会再压栈（同址判定）
+  };
+  topCenter.append(backBtn, SearchBox());
+  top.append(topCenter);
   // 播放条必须在 .frame 流内（占 flex 高度）；np/队列是 fixed 覆盖层，挂 body 即可
   frame.append(PlayerBar());
   document.body.append(NowPlaying(), QueuePanel());
