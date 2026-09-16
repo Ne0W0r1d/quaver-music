@@ -66,32 +66,32 @@ await step("歌手页：返回钮出现（搜索框左侧、零重叠、可点�
   return "visible, left of pill, hittable, searchbar node stable";
 });
 
-await step("歌手页：热门歌曲 + 最新发布歌曲 两分区独立渲染", async () => {
-  const info = await page.evaluate(() => {
-    const secs = [...document.querySelectorAll(".sec-title")].map((x) => x.textContent.trim());
-    const groups = [...document.querySelectorAll("#route > *")];
-    let hotRows = 0, hotIdx = -1, newIdx = -1;
-    groups.forEach((g, i) => {
-      if (g.classList.contains("sec-title") || g.querySelector?.(":scope.sec-title")) {
-        if (g.textContent.includes("热门歌曲")) hotIdx = i;
-        if (g.textContent.includes("最新发布歌曲")) newIdx = i;
-      }
-    });
-    const rows = document.querySelectorAll(".rows .row").length;
-    const firstHot = document.querySelectorAll("#route > .rows")[0]?.querySelector(".row .rt")?.textContent;
-    const firstNew = document.querySelectorAll("#route > .rows")[1]?.querySelector(".row .rt")?.textContent;
-    return { secs, rows, firstHot, firstNew };
-  });
-  if (!info.secs.includes("热门歌曲")) throw new Error("missing 热门歌曲");
-  if (!info.secs.includes("最新发布歌曲")) throw new Error("missing 最新发布歌曲");
-  if (info.rows < 20) throw new Error("too few total rows: " + info.rows);
-  if (!info.firstHot || !info.firstNew) throw new Error("one of the two lists empty");
-  if (info.firstHot === info.firstNew) throw new Error("hot and new start with same song (order param not applied?)");
-  return `rows=${info.rows}, hot="${info.firstHot}"… new="${info.firstNew}"…`;
+await step("歌手页：热歌/新歌 两个标签各有一份独立列表（order=1 / order=2）", async () => {
+  const hot = await page.evaluate(() => ({
+    idx: [...document.querySelectorAll(".tag-body .tag-panel")].findIndex((p) => !p.hidden),
+    rows: document.querySelectorAll(".tag-body .tag-panel:not([hidden]) .row").length,
+    first: document.querySelector(".tag-body .tag-panel:not([hidden]) .row .rt")?.textContent ?? "",
+  }));
+  if (hot.idx !== 0) throw new Error("default visible panel should be 热歌, idx=" + hot.idx);
+  if (hot.rows < 10) throw new Error("too few hot rows: " + hot.rows);
+  await page.click('.tag-tabs .tag[data-tab="new"]');
+  await sleep(200);
+  const nw = await page.evaluate(() => ({
+    idx: [...document.querySelectorAll(".tag-body .tag-panel")].findIndex((p) => !p.hidden),
+    rows: document.querySelectorAll(".tag-body .tag-panel:not([hidden]) .row").length,
+    first: document.querySelector(".tag-body .tag-panel:not([hidden]) .row .rt")?.textContent ?? "",
+  }));
+  if (nw.idx !== 1) throw new Error("新歌 panel not visible, idx=" + nw.idx);
+  if (nw.rows < 10) throw new Error("too few new rows: " + nw.rows);
+  if (hot.first === nw.first) throw new Error("hot and new start with same song (order param not applied?)");
+  return `hot rows=${hot.rows} "${hot.first}" / new rows=${nw.rows} "${nw.first}"`;
 });
 
-await step("专辑区「查看全部」入口存在且指向 singer-albums", async () => {
-  const href = await page.evaluate(() => document.querySelector(".sec-more")?.getAttribute("href") ?? "");
+await step("专辑标签「查看全部」入口存在且指向 singer-albums", async () => {
+  await page.click('.tag-tabs .tag[data-tab="album"]');
+  await sleep(200);
+  const href = await page.evaluate(() =>
+    document.querySelector(".tag-body .tag-panel:not([hidden]) .sec-more")?.getAttribute("href") ?? "");
   if (!href.startsWith("#/singer-albums?mid=0025NhlN2yWrP4")) throw new Error("bad href: " + href);
   return href;
 });

@@ -131,8 +131,23 @@ button { font: inherit; }
    而非容器 padding——这样 margin:auto 的搜索框仍精确居于整条带的几何中心，
    只是当条带可用宽 < 搜索框宽+簇宽 时（极窄窗）才会被幽灵项推开，届时装不下的将是胶囊本身（可接受）。 */
 .content-top {
-  flex: 0 0 auto; display: flex; align-items: center; min-height: 42px; padding: 6px 24px 4px;
+  flex: 0 0 auto; position: relative; display: flex; align-items: center; min-height: 42px; padding: 6px 24px 4px;
 }
+/* CSD 顶带拖拽：把手是顶带内的**独立层** .top-drag，而不是 .content-top 整块。
+   原因：drag 矩形会吞掉落在其下的所有指针事件，而 no-drag 的豁免只在**同一子树内**成立——
+   窗口按钮簇（.winbtns）是顶带的兄弟子树，它给按钮打的 no-drag 挡不住顶带铺过来的 drag 矩形，
+   于是三颗按钮一点就变窗口拖动。所以 drag 矩形必须自己止步在按钮之前。
+   几何（都是距窗口右缘的距离，顶带右缘在距窗口右 11px 处：body 10 + .content 边框 1）：
+     .winbtns right:12 / 宽 120（2+26+4+26+4+26+4+26+2）→ 簇左缘 132、抓握点 130~104、按钮区 100~14。
+   故 top-drag 右缩 94px → drag 止于距窗口右 105px：抓握点整块在把手内，按钮区还留 5px 余量。
+   若调整按钮尺寸/间距/簇右偏移，这个数字要跟着改。 */
+body:not(.ssd) .content-top { user-select: none; }
+body:not(.ssd) .content-top .top-drag {
+  position: absolute; inset: 0 94px 0 0;
+  -webkit-app-region: drag; cursor: grab;
+}
+body:not(.ssd) .content-top .top-center { -webkit-app-region: no-drag; cursor: default; }
+body:not(.ssd) .content-top .sb-field input { user-select: text; }
 .content-top::before, .content-top::after { content: ""; flex: 0 0 0; }
 body:not(.ssd) .content-top::before, body:not(.ssd) .content-top::after { flex-basis: 134px; } /* 左右对称：按钮簇宽120 + 间隙 */
 /* 路由视图区：renderRoute 只重建这里，搜索框（顶带流内）不受影响 */
@@ -197,13 +212,16 @@ body:not(.ssd) .content-top::before, body:not(.ssd) .content-top::after { flex-b
 .sb-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* —— 搜索视图（#/search 落点页）—— */
-.search-tabs { display: flex; gap: 6px; margin-bottom: 16px; }
-.stab {
+/* —— 分类标签组：搜索页（.search-tabs/.stab）与歌手页（.tag-tabs/.tag）共用同一套胶囊样式 —— */
+.search-tabs, .tag-tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+.stab, .tag {
   padding: 5px 14px; border-radius: 999px; border: 1px solid var(--line);
   background: transparent; color: var(--ink2); font-size: 13px; cursor: pointer;
 }
-.stab:hover { background: var(--hover); color: var(--ink); }
-.stab.sel { background: var(--acc); border-color: var(--acc); color: #fff; font-weight: 600; }
+.stab:hover, .tag:hover { background: var(--hover); color: var(--ink); }
+.stab.sel, .tag.sel { background: var(--acc); border-color: var(--acc); color: #fff; font-weight: 600; }
+/* 面板组：三块常驻 DOM，只切 hidden（切换标签不重排、不重拉数据） */
+.tag-body > .tag-panel[hidden] { display: none; }
 .hot-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
   padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line);

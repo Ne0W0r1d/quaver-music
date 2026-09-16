@@ -112,7 +112,9 @@ export function bootShell() {
   const frame = document.createElement("div");
   frame.className = "frame";
   frame.innerHTML = `
-    <!-- CSD：无标题栏、无浮窗。三钮（min/max/close）+抓握点平铺窗口右上角，簇底即拖拽区；顶缘另有一条隐形拖拽细条 -->
+    <!-- CSD：无标题栏、无浮窗。三钮（min/max/close）+抓握点平铺窗口右上角，簇底即拖拽区；
+         搜索框所在整条顶带同样是拖拽把手，由顶带内的 .top-drag 层承担（右缘让开按钮簇——
+         drag 矩形会吞掉其下所有指针事件，按钮的 no-drag 只在同子树内豁免） -->
     <div class="win-dragtop" aria-hidden="true"></div>
     <div class="winbtns" data-csd-drag>
       <span class="win-grip" aria-hidden="true"><svg viewBox="0 0 16 12" width="14" height="11"><g fill="currentColor"><circle cx="4" cy="3.5" r="1.1"/><circle cx="8" cy="3.5" r="1.1"/><circle cx="12" cy="3.5" r="1.1"/><circle cx="4" cy="8.5" r="1.1"/><circle cx="8" cy="8.5" r="1.1"/><circle cx="12" cy="8.5" r="1.1"/></g></svg></span>
@@ -162,7 +164,12 @@ export function bootShell() {
     if (stackPos > 0) { stackPos--; history.back(); } // renderRoute/hashchange 不会再压栈（同址判定）
   };
   topCenter.append(backBtn, SearchBox());
-  top.append(topCenter);
+  // CSD 拖拽把手层：顶带内的独立层（右缘让开窗口按钮簇，几何见 style.css .top-drag 注释）。
+  // 放在 .top-center 之前 → DOM 序在后者的下层，搜索组照样收得到指针事件。
+  const topDrag = document.createElement("div");
+  topDrag.className = "top-drag";
+  topDrag.setAttribute("aria-hidden", "true");
+  top.append(topDrag, topCenter);
   // 播放条必须在 .frame 流内（占 flex 高度）；np/队列是 fixed 覆盖层，挂 body 即可
   frame.append(PlayerBar());
   document.body.append(NowPlaying(), QueuePanel());

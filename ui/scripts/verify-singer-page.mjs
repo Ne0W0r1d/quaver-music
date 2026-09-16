@@ -1,7 +1,8 @@
 // 歌手页 + 信息头改版验证：
-//   1) 歌手页 = 歌单/专辑同款信息头（左圆形头像 右 名字/详情/简介，上对齐）+ 热门歌曲 + 专辑网格
+//   1) 歌手页 = 歌单/专辑同款信息头（左圆形头像 右 名字/详情/简介，上对齐）+ 标签分类（热歌/新歌/专辑）
 //   2) 歌单/专辑/歌手三页信息头整体顶缘对齐（图片顶 == 名字顶 ≈ 同一行）
 //   3) 简介超两行 → 出现「展开」按钮，点击展开全文并变「收起」，再点收回
+//   4) 标签栏：默认「热歌」，点「新歌」/「专辑」只切面板（不重新请求、URL 不变）
 import puppeteer from "puppeteer-core";
 const BASE = "http://127.0.0.1:5173";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -78,23 +79,58 @@ await step("简介长文本 → 出现展开按钮，点击展开全文变收起
   return `clamped=${hClamped}px expanded=${hOpen}px`;
 });
 
-await step("热门歌曲列表 + 专辑网格渲染", async () => {
+await step("标签栏：默认热歌，切新歌/专辑只换面板（哈希不变）", async () => {
   const info = await page.evaluate(() => {
-    const secs = [...document.querySelectorAll(".sec-title")].map((x) => x.textContent.trim());
-    const rows = document.querySelectorAll(".rows .row").length;
-    const cards = document.querySelectorAll(".grid .card").length;
-    const firstAlbum = document.querySelector(".grid .card");
-    return { secs, rows, cards, href: firstAlbum?.getAttribute("href") ?? "", imgOk: !!firstAlbum?.querySelector("img")?.src };
+    const tabs = [...document.querySelectorAll(".tag-tabs .tag")].map((b) => ({
+      label: b.textContent.trim(), sel: b.classList.contains("sel"),
+    }));
+    const visible = () => [...document.querySelectorAll(".tag-body .tag-panel")].findIndex((p) => !p.hidden);
+    return { tabs, hot: visible(), hash: location.hash };
   });
-  if (!info.secs.includes("热门歌曲") || !info.secs.includes("专辑")) throw new Error("missing section titles: " + info.secs);
+  if (info.tabs.map((t) => t.label).join("/") !== "热歌/新歌/专辑") throw new Error("tab labels wrong: " + JSON.stringify(info.tabs));
+  if (info.tabs.filter((t) => t.sel).length !== 1 || !info.tabs[0].sel) throw new Error("default tab should be 热歌: " + JSON.stringify(info.tabs));
+  if (info.hot !== 0) throw new Error("hot panel not the visible one: idx=" + info.hot);
+  const hash0 = info.hash;
+
+  await page.click('.tag-tabs .tag[data-tab="new"]'); await sleep(150);
+  const after = await page.evaluate((h0) => {
+    const vis = [...document.querySelectorAll(".tag-body .tag-panel")].findIndex((p) => !p.hidden);
+    return { idx: vis, rows: document.querySelectorAll(".tag-body .tag-panel:not([hidden]) .row").length,
+      sel: document.querySelector(".tag[data-tab='new']").classList.contains("sel"), sameHash: location.hash === h0 };
+  }, hash0);
+  if (after.idx !== 1) throw new Error("new panel not visible: idx=" + after.idx);
+  if (!after.sel) throw new Error("新歌 tag not highlighted");
+  if (!after.sameHash) throw new Error("tab switch should not touch the route hash");
+  return `tabs=${info.tabs.map((t) => t.label).join("/")}, new-panel rows=${after.rows}`;
+});
+
+await step("热歌面板：歌曲列表渲染（≥10 行）", async () => {
+  await page.click('.tag-tabs .tag[data-tab="hot"]'); await sleep(150);
+  const info = await page.evaluate(() => ({
+    rows: document.querySelectorAll(".tag-body .tag-panel:not([hidden]) .row").length,
+    first: document.querySelector(".tag-body .tag-panel:not([hidden]) .row .ra")?.textContent?.trim() ?? "",
+  }));
   if (info.rows < 10) throw new Error("too few song rows: " + info.rows);
+  return `rows=${info.rows}, first=${info.first}`;
+});
+
+await step("专辑面板：卡片网格 + 「查看全部」指向 singer-albums", async () => {
+  await page.click('.tag-tabs .tag[data-tab="album"]'); await sleep(200);
+  const info = await page.evaluate(() => {
+    const panel = document.querySelector(".tag-body .tag-panel:not([hidden])");
+    const first = panel.querySelector(".grid .card");
+    return { cards: panel.querySelectorAll(".grid .card").length, href: first?.getAttribute("href") ?? "",
+      more: panel.querySelector(".sec-more")?.getAttribute("href") ?? "", imgOk: !!first?.querySelector("img")?.src };
+  });
   if (info.cards < 5) throw new Error("too few album cards: " + info.cards);
   if (!info.href.startsWith("#/album?mid=")) throw new Error("album card href wrong: " + info.href);
-  return `rows=${info.rows}, albums=${info.cards}`;
+  if (!info.more.startsWith("#/singer-albums?mid=0025NhlN2yWrP4")) throw new Error("bad 查看全部 href: " + info.more);
+  return `albums=${info.cards}`;
 });
 
 await step("专辑卡点击 → 跳到专辑页且信息头上对齐", async () => {
-  const href = await page.evaluate(() => document.querySelector(".grid .card").getAttribute("href"));
+  const href = await page.evaluate(() =>
+    document.querySelector(".tag-body .tag-panel:not([hidden]) .grid .card").getAttribute("href"));
   await page.goto(BASE + "/index.html" + href);
   await sleep(1600);
   const info = await page.evaluate(() => {

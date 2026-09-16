@@ -115,7 +115,27 @@ async function playlistView(root: HTMLElement, q: URLSearchParams) {
   renderSongRows(rows, songs, hooks);
 }
 
-// —— 歌手页（点击行内歌手跳转的落点）：信息头 + 热门歌曲 + 专辑网格（布局对齐歌单/专辑页） ——
+// 专辑卡网格（歌手页「专辑」标签 / 歌手全部专辑页共用同一套卡面）
+function albumCardsHtml(albums: any[]): string {
+  return albums.map((x) => {
+    const pm: string = x.pmid || x.mid || "";
+    const cover = pm ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${pm.split("_")[0]}.jpg` : "";
+    const sub = [x.album_type, x.time_public].filter(Boolean).join(" · ");
+    return `<a class="card" href="#/album?mid=${encodeURIComponent(x.mid ?? "")}&name=${encodeURIComponent(x.name || "专辑")}">
+      <div class="art">${cover ? `<img src="${cover}" alt="" loading="lazy"/>` : ""}</div>
+      <div class="name">${escHtml(x.name || "专辑")}</div><div class="sub">${escHtml(sub)}</div></a>`;
+  }).join("");
+}
+
+// —— 歌手页（点击行内歌手跳转的落点）：信息头 + 分类标签（热歌 / 新歌 / 专辑） ——
+// 三块内容一次性并拉，标签只决定「显示哪一块」：切换不重新请求、不重置 .route 滚动位置。
+// 默认落在「热歌」。信息头仍与歌单/专辑页同一套（左图右文、上对齐）。
+const SINGER_TABS = [
+  { key: "hot", label: "热歌" },
+  { key: "new", label: "新歌" },
+  { key: "album", label: "专辑" },
+] as const;
+
 async function singerView(root: HTMLElement, q: URLSearchParams) {
   const mid = q.get("mid") || "";
   const name = decodeURIComponent(q.get("name") || "歌手");
@@ -150,39 +170,51 @@ async function singerView(root: HTMLElement, q: URLSearchParams) {
   });
 
   const songs: any[] = songData?.song_list ?? [];
-  if (!songs.length) { root.append(h("div", "rows muted", "没有取到热门歌曲")); return; }
-  root.append(h("h2", "sec-title", "热门歌曲"));
-  const rows = h("div", "rows");
-  root.append(rows);
-  renderSongRows(rows, songs, { showAlbum: true, onPlay: (s, i, all) => player.playList(all, i) });
-
-  // 最新发布（order=2 按发行时间倒序）：与热门同列风格，去掉与热门完全重合的条目
   const hotKeys = new Set(songs.map((s) => s.mid));
+  // 最新发布（order=2 按发行时间倒序）：与热门同列风格，去掉与热门完全重合的条目
   const newSongs: any[] = ((newSongData?.song_list ?? []) as any[]).filter((s) => !hotKeys.has(s.mid));
-  if (newSongs.length) {
-    root.append(h("h2", "sec-title", "最新发布歌曲"));
-    const newRows = h("div", "rows");
-    root.append(newRows);
-    renderSongRows(newRows, newSongs, { showAlbum: true, onPlay: (s, i, all) => player.playList(all, i) });
-  }
-
   const albums: any[] = albumData?.album_list ?? [];
+
+  // 标签栏 + 面板组：三块常驻 DOM，select() 只切 hidden
+  const tabs = h("div", "tag-tabs");
+  tabs.innerHTML = SINGER_TABS.map(
+    (t) => `<button class="tag" type="button" data-tab="${t.key}">${t.label}</button>`,
+  ).join("");
+  const body = h("div", "tag-body");
+  root.append(tabs, body);
+
+  const songPanel = (list: any[], empty: string) => {
+    const p = h("div", "tag-panel");
+    if (!list.length) { p.innerHTML = `<div class="rows muted">${empty}</div>`; return p; }
+    const rows = h("div", "rows");
+    p.append(rows);
+    renderSongRows(rows, list, { showAlbum: true, onPlay: (s, i, all) => player.playList(all, i) });
+    return p;
+  };
+
+  const hotPanel = songPanel(songs, "没有取到热门歌曲");
+  const newPanel = songPanel(newSongs, "暂无新歌");
+  const albumPanel = h("div", "tag-panel");
   if (albums.length) {
-    const secRow = h("div", "sec-row");
-    secRow.innerHTML = `<h2 class="sec-title" style="margin:0">专辑</h2>
-      <a class="sec-more" href="#/singer-albums?mid=${encodeURIComponent(mid)}&name=${encodeURIComponent(displayName)}">查看全部 ${albumData?.total ?? albums.length} 张 ›</a>`;
-    root.append(secRow);
+    const more = h("div", "sec-row");
+    more.style.marginTop = "0";
+    more.innerHTML = `<span class="muted">共 ${albumData?.total ?? albums.length} 张</span>
+      <a class="sec-more" href="#/singer-albums?mid=${encodeURIComponent(mid)}&name=${encodeURIComponent(displayName)}">查看全部 ›</a>`;
     const grid = h("div", "grid");
-    grid.innerHTML = albums.map((x) => {
-      const pm: string = x.pmid || x.mid || "";
-      const cover = pm ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${pm.split("_")[0]}.jpg` : "";
-      const sub = [x.album_type, x.time_public].filter(Boolean).join(" · ");
-      return `<a class="card" href="#/album?mid=${encodeURIComponent(x.mid ?? "")}&name=${encodeURIComponent(x.name || "专辑")}">
-        <div class="art">${cover ? `<img src="${cover}" alt="" loading="lazy"/>` : ""}</div>
-        <div class="name">${escHtml(x.name || "专辑")}</div><div class="sub">${escHtml(sub)}</div></a>`;
-    }).join("");
-    root.append(grid);
+    grid.innerHTML = albumCardsHtml(albums);
+    albumPanel.append(more, grid);
+  } else {
+    albumPanel.innerHTML = `<div class="rows muted">暂无专辑</div>`;
   }
+  const panels = [hotPanel, newPanel, albumPanel];
+  body.append(...panels);
+
+  const select = (key: string) => {
+    panels.forEach((p, i) => (p.hidden = SINGER_TABS[i].key !== key));
+    tabs.querySelectorAll<HTMLElement>(".tag").forEach((b) => b.classList.toggle("sel", b.dataset.tab === key));
+  };
+  tabs.querySelectorAll<HTMLElement>(".tag").forEach((b) => (b.onclick = () => select(b.dataset.tab!)));
+  select("hot");
 }
 
 // —— 歌手全部专辑页：信息头复用歌手页样式 + 全部分页拉取专辑网格 ——
@@ -216,14 +248,7 @@ async function singerAlbumsView(root: HTMLElement, q: URLSearchParams) {
   });
   if (!albums.length) { root.append(h("div", "rows muted", "暂无专辑")); return; }
   const grid = h("div", "grid");
-  grid.innerHTML = albums.map((x) => {
-    const pm: string = x.pmid || x.mid || "";
-    const cover = pm ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${pm.split("_")[0]}.jpg` : "";
-    const sub = [x.album_type, x.time_public].filter(Boolean).join(" · ");
-    return `<a class="card" href="#/album?mid=${encodeURIComponent(x.mid ?? "")}&name=${encodeURIComponent(x.name || "专辑")}">
-      <div class="art">${cover ? `<img src="${cover}" alt="" loading="lazy"/>` : ""}</div>
-      <div class="name">${escHtml(x.name || "专辑")}</div><div class="sub">${escHtml(sub)}</div></a>`;
-  }).join("");
+  grid.innerHTML = albumCardsHtml(albums);
   root.append(grid);
 }
 
