@@ -119,6 +119,7 @@ export function bootShell() {
         <a class="settings" href="#/settings" title="设置">${icons.settings}</a>
       </aside>
       <main class="content">
+        <div class="content-top"></div>
         <div class="route" id="route"></div>
       </main>
     </div>
@@ -126,8 +127,9 @@ export function bootShell() {
   document.body.prepend(frame);
   state.content = frame.querySelector<HTMLElement>(".content")!;
   state.route = frame.querySelector<HTMLElement>("#route")!;
-  // 搜索框常驻内容区（absolute 浮层，与页面标题同行居中）：路由切换/视图刷新只重建 #route，它不动
-  state.content.append(SearchBox());
+  // 搜索框常驻壳层顶带（.content-top，与 CSD 按钮簇同一水平带）：路由切换/视图刷新只重建 #route，
+  // 它不动；顶带把标题行整个让给页面内容，窄窗口下不再互相遮挡。
+  state.content.querySelector<HTMLElement>(".content-top")!.append(SearchBox());
   // 播放条必须在 .frame 流内（占 flex 高度）；np/队列是 fixed 覆盖层，挂 body 即可
   frame.append(PlayerBar());
   document.body.append(NowPlaying(), QueuePanel());

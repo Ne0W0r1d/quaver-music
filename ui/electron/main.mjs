@@ -257,8 +257,8 @@ async function createWindow() {
   win = new BrowserWindow({
     width: 1280,
     height: 840,
-    minWidth: 900,
-    minHeight: 600,
+    minWidth: 760,   // 布局已适配窄窗（搜索框独立顶带 + 播放条流内收缩），半屏吸附不再挤压重叠
+    minHeight: 520,   // 播放条为 .frame 流内固定行：任何高度下都占位可见
     frame: decorMode === "ssd", // CSD=无原生标题栏（右上角按钮簇）；SSD=系统标题栏
     backgroundColor: "#f7f7f8",
     title: "Quaver",

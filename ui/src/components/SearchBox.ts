@@ -1,6 +1,6 @@
 // Quaver — 顶部搜索框（常驻壳层组件，不随视图切换重建）
-// absolute 浮层挂在 .content 顶行（与页面大标题同行、水平居中）：renderRoute() 只重建
-// #route，本组件 DOM/输入状态/联想面板在整个会话内保持不变。
+// 挂在内容区顶带 .content-top（独立一行，与 CSD 按钮簇同带、右缘由该带预留避让位）：renderRoute() 只重建
+// #route，本组件 DOM/输入状态/联想面板在整个会话内保持不变；顶带不与页面标题同带，窄窗口下互不遮挡。
 // 交互：输入即联想（/search/complete，debounce）；Enter 或点联想词 → #/search?keyword=…
 //       视图内点任意联想词 = 按歌名直搜（服务端结果词面一致，忽略客户端高亮标签）。
 import { api } from "../lib/api";

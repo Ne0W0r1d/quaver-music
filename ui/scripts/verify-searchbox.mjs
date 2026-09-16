@@ -20,10 +20,10 @@ await page.goto(`${BASE}/index.html#/`, { waitUntil: "networkidle2" });
 await sleep(800);
 
 // 标记搜索框节点，跨路由比对是否同一 DOM（不随视图刷新重载）
-await step("搜索框=小号浮层，居内容区顶行、与页面标题同行", async () => {
+await step("搜索框=顶带流内组件（.content-top），独立一行、不与标题同带", async () => {
   const info = await page.evaluate(() => {
-    const sb = document.querySelector(".content .searchbar");
-    if (!sb) throw new Error("no .searchbar in .content");
+    const sb = document.querySelector(".content-top .searchbar");
+    if (!sb) throw new Error("no .searchbar in .content-top");
     const r = sb.getBoundingClientRect();
     const c = document.querySelector(".content").getBoundingClientRect();
     const t = document.querySelector(".page-title").getBoundingClientRect();
@@ -32,15 +32,15 @@ await step("搜索框=小号浮层，居内容区顶行、与页面标题同行"
       pos: getComputedStyle(sb).position,
       h: Math.round(r.height),
       centered: Math.abs(r.left + r.width / 2 - (c.left + c.width / 2)) < 4,
-      sameRow: r.top < t.bottom && r.bottom > t.top, // 垂直带与标题相交 = 同一行
+      clearOfTitle: r.bottom <= t.top + 2, // 顶带独立一行：搜索框下缘在标题上缘之上 = 永不遮挡
       goGone: !sb.querySelector("#go"),
     };
   });
-  if (info.pos !== "absolute") throw new Error("position=" + info.pos);
+  if (info.pos !== "relative") throw new Error("position=" + info.pos);
   if (!info.centered) throw new Error("not horizontally centered");
-  if (!info.sameRow) throw new Error("not on the page-title row");
+  if (!info.clearOfTitle) throw new Error("overlaps the page title row");
   if (!info.goGone) throw new Error("standalone go button still present");
-  return `h=${info.h}px, centered, title-row, no go-btn`;
+  return `h=${info.h}px, centered, own band above title-row, no go-btn`;
 });
 
 await step("CSD 三按钮+把手在右上角（无浮窗底/无标题栏）", async () => {

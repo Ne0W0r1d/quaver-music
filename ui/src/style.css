@@ -75,7 +75,8 @@ button { font: inherit; }
   -webkit-app-region: drag; cursor: grab; user-select: none;
 }
 
-.body { flex: 1; display: flex; gap: 10px; padding: 10px 10px 84px; min-height: 0; }
+/* .body 底部不再给播放条留 absolute 空间——播放条已改为 .frame 流内固定行（任何窗口高度都必然可见） */
+.body { flex: 1; display: flex; gap: 10px; padding: 10px; min-height: 0; }
 .sidebar {
   flex: 0 0 216px; border-radius: 14px; padding: 14px 10px;
   display: flex; flex-direction: column; gap: 10px; overflow: hidden; min-height: 0;
@@ -107,7 +108,7 @@ button { font: inherit; }
 
 .sep { border: 0; border-top: 1px dashed var(--sep); margin: 4px 6px; }
 
-.playlists { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
+.playlists { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; margin: 0 -4px; padding: 0 4px; }
 .pl { display: flex; gap: 9px; align-items: center; padding: 6px 7px; border-radius: 8px; min-height: 44px; }
 .pl:hover { background: var(--hover); }
 .pl .thumb { width: 32px; height: 32px; flex: 0 0 auto; border-radius: 6px; background: var(--ph2); overflow: hidden; }
@@ -123,14 +124,41 @@ button { font: inherit; }
   background: var(--panel); border: 1px solid var(--panel-line);
   backdrop-filter: blur(24px) saturate(1.4); -webkit-backdrop-filter: blur(24px) saturate(1.4);
 }
-/* 路由视图区：renderRoute 只重建这里，搜索框（absolute 浮层）不受影响 */
-.route { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; }
+/* 内容区顶带：常驻搜索框所在的独立一行（不再与页面标题同带浮层）。
+   顶带本身就是 CSD 按钮簇所在的水平区间——右缘永远为其预留避让位（SSD 下不预留），
+   #route 从顶带之下开始滚动，滚动条与内容都碰不到按钮簇。
+   水平布局用「左占位 = 右预留」的对称技巧：预留位挂在 ::after（流内幽灵项），
+   而非容器 padding——这样 margin:auto 的搜索框仍精确居于整条带的几何中心，
+   只是当条带可用宽 < 搜索框宽+簇宽 时（极窄窗）才会被幽灵项推开，届时装不下的将是胶囊本身（可接受）。 */
+.content-top {
+  flex: 0 0 auto; display: flex; align-items: center; min-height: 42px; padding: 6px 24px 4px;
+}
+.content-top::before, .content-top::after { content: ""; flex: 0 0 0; }
+body:not(.ssd) .content-top::before, body:not(.ssd) .content-top::after { flex-basis: 134px; } /* 左右对称：按钮簇宽120 + 间隙 */
+/* 路由视图区：renderRoute 只重建这里，搜索框（顶带流内）不受影响 */
+.route { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 24px 20px; }
+
+/* —— 全局滚动条：细圆条、透明轨道、悬停加深（不做大滑块） ——
+   宽槽(10px) + 3px 透明描边 + background-clip：可见滑块只占 4px，轨道完全不画底色，
+   视觉上等同悬浮式细条；滚动区（.route/.playlists/.qp-list/.sb-drop）都在这层样式管辖内。 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink2) 32%, transparent);
+  background-clip: padding-box;
+  border: 3px solid transparent; border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--ink2) 55%, transparent); background-clip: padding-box; border: 3px solid transparent; }
+/* 注意：不要再给这些滚动区加 scrollbar-width/scrollbar-color——新版 Chromium（≥121，含 Electron）
+   一旦设置就会整体禁用 ::-webkit-scrollbar 自定义样式，细圆条会被浏览器默认款顶掉。 */
 .content h2 { margin: 0 0 14px; font-size: 18px; }
 .muted { color: var(--ink2); }
 
-/* 常驻搜索框：小号胶囊，绝对定位浮在内容区顶行（与页面大标题同行、水平居中）。
-   不占独立行，路由视图在其下方滚动。z-index 低于下拉(60)高于内容标题。 */
-.searchbar { position: absolute; top: 31px; left: 50%; transform: translateX(-50%); z-index: 6; width: 210px; }
+/* 常驻搜索框：小号胶囊，居于内容区顶带（.content-top）正中。
+   顶带是独立一行，不再浮在页面标题上——任意窗口宽度下都不会遮挡标题/歌手名；
+   右缘避让位由 .content-top 的 padding-right 统一给出。z-index 低于下拉(60)。 */
+.searchbar { position: relative; z-index: 6; width: clamp(180px, 26vw, 260px); margin: 0 auto; }
 .sb-field {
   display: flex; align-items: center; gap: 7px; min-width: 0; height: 29px; padding: 0 11px;
   border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: var(--ink2);
@@ -174,8 +202,8 @@ button { font: inherit; }
 .card .art.round { border-radius: 50%; }
 .more-bar { display: flex; justify-content: center; margin: 18px 0 4px; }
 
-/* 歌单/专辑信息头（设计稿：左封面 右 标题/制作/描述） */
-.pl-head { display: flex; gap: 20px; align-items: flex-end; margin: 6px 0 20px; }
+/* 歌单/专辑/歌手信息头（设计稿：左封面 右 标题/详情/简介；整体上对齐） */
+.pl-head { display: flex; gap: 20px; align-items: flex-start; margin: 6px 0 20px; }
 .pl-back {
   align-self: flex-start; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 50%;
   border: 1px solid var(--line); background: var(--card); color: var(--ink2);
@@ -184,10 +212,23 @@ button { font: inherit; }
 .pl-back:hover { background: var(--hover); color: var(--ink); }
 .pl-art { width: 168px; height: 168px; flex: 0 0 auto; border-radius: 12px; overflow: hidden; background: var(--ph); box-shadow: 0 8px 24px #00000022; }
 .pl-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.pl-info { min-width: 0; padding-bottom: 4px; }
+/* 歌手页：头像圆形（与搜索页歌手卡 .art.round 同一语言） */
+.pl-art.round { border-radius: 50%; }
+.pl-info { min-width: 0; flex: 1; display: flex; flex-direction: column; }
 .pl-name { margin: 0 0 8px; font-size: 26px; font-weight: 800; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl-meta { font-size: 12.5px; color: var(--ink2); margin-bottom: 6px; }
-.pl-desc { font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* 简介：默认两行截断（折叠态换行符并空格，省略号自然落在第二行末尾；展开态恢复段落），
+   「展开」按钮切换全文（按钮由 JS 按溢出情况决定是否显示） */
+.pl-desc { font-size: 12.5px; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pl-desc.open { display: block; -webkit-line-clamp: unset; overflow: visible; white-space: pre-line; }
+.pl-expand {
+  align-self: flex-start; margin-top: 4px; padding: 2px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: transparent; color: var(--ink2);
+  font-size: 12px; cursor: pointer; transition: border-color .12s, color .12s;
+}
+.pl-expand:hover { border-color: var(--acc); color: var(--acc); }
+/* 歌手页分区标题（热门歌曲/专辑）：比信息头大名字小一档 */
+.sec-title { margin: 22px 0 10px; font-size: 16px; font-weight: 800; color: var(--ink); }
 
 /* SPA 页面大标题（对齐设计稿：首页 = 超大深灰粗体） */
 .page-title { margin: 6px 0 18px; font-size: 26px; font-weight: 800; letter-spacing: .5px; color: var(--ink); }
@@ -223,14 +264,27 @@ button { font: inherit; }
 .row .row-love.on { color: #e8465a; }
 .row .dur { width: 40px; text-align: right; color: var(--idx); font-size: 12px; flex: 0 0 auto; }
 
-/* ===================== 底部播放条（悬浮覆盖内容；列表底部留 padding 完整滚出） ===================== */
+/* ===================== 底部播放条（.frame 流内固定行：任何窗口高度都必然可见，
+   不会随内容滚走、不会被浮层盖住，也不依赖 body 底部预留 padding——旧 absolute 悬浮方案
+   在矮窗口/半屏吸附时会被窗口下缘裁切，已废弃） ===================== */
 .player {
-  position: absolute; z-index: 60; left: 10px; right: 10px; bottom: 10px;
+  position: relative; z-index: 60; flex: 0 0 auto; margin: 0 10px 10px;
   height: 64px; border-radius: 14px;
   display: flex; align-items: center; gap: 14px; padding: 0 16px; color: var(--ink2);
   background: var(--glass); border: 1px solid var(--glass-line);
   box-shadow: 0 6px 28px rgba(15,20,30,.12);
   backdrop-filter: blur(26px) saturate(1.5); -webkit-backdrop-filter: blur(26px) saturate(1.5);
+}
+/* 窄窗口防溢出：三列可收缩 + 中列按钮间隙收紧（播放/暂停永远留位） */
+@media (max-width: 1020px) {
+  .pb-left { width: auto; max-width: 250px; flex: 0 1 auto; }
+  .player { gap: 8px; padding: 0 10px; }
+  .pb-mid { margin: 0; }
+  .pb-right { margin-left: auto; }
+}
+@media (max-width: 860px) {
+  .pb-q, .pb-btn#pb-love { display: none; }
+  .now .s { display: none; }
 }
 /* 背景染色进度条：已播区 = 封面主色。贴紧 Bar 左右两端（border 内侧），
    R 角与 .player(14px) 同心（13px），满进度时正好铺满内沿。
@@ -437,7 +491,7 @@ button { font: inherit; }
 .qp-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; font-weight: 700; border-bottom: 1px solid var(--line); }
 .qp-close { border: 0; background: transparent; color: var(--ink2); cursor: pointer; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; }
 .qp-close:hover { background: var(--hover); }
-.qp-list { overflow-y: auto; padding: 6px; scrollbar-width: thin; }
+.qp-list { overflow-y: auto; padding: 6px; }
 .qp-item { display: flex; gap: 8px; align-items: center; padding: 7px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; }
 .qp-item:hover { background: var(--row-hover); }
 .qp-item.cur { background: var(--tint-row); color: var(--acc); font-weight: 600; }

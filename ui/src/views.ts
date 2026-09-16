@@ -16,6 +16,44 @@ const h = (tag: string, cls: string, html = "") => {
   return el;
 };
 
+const escHtml = (s: string) =>
+  String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+const BACK_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6l-6 6 6 6"/></svg>`;
+
+// 信息头（歌单/专辑/歌手共用）：左图 右「名称/详情/简介」整体上对齐；
+// 简介默认两行截断，文本真溢出时出「展开」按钮（点一下显全文，再点收回）。
+function mountHead(root: HTMLElement, opts: {
+  artHtml: string; artRound?: boolean; name: string; meta: string; desc: string;
+}) {
+  const head = h("div", "pl-head");
+  head.innerHTML = `
+    <button class="pl-back" aria-label="返回" title="返回">${BACK_SVG}</button>
+    <div class="pl-art${opts.artRound ? " round" : ""}">${opts.artHtml}</div>
+    <div class="pl-info">
+      <h1 class="pl-name">${escHtml(opts.name)}</h1>
+      <div class="pl-meta">${escHtml(opts.meta)}</div>
+      <div class="pl-desc muted">${escHtml(opts.desc)}</div>
+    </div>`;
+  root.append(head);
+  head.querySelector<HTMLElement>(".pl-back")!.onclick = () => history.length > 1 ? history.back() : (location.hash = "#/");
+  const desc = head.querySelector<HTMLElement>(".pl-desc")!;
+  if (opts.desc) {
+    // 截断检测在下一帧做（-webkit-line-clamp 生效后 scrollHeight 才可比）
+    requestAnimationFrame(() => {
+      if (desc.scrollHeight - desc.clientHeight <= 2) return; // 两行内放得下：不需要按钮
+      const btn = h("button", "pl-expand", "展开") as HTMLButtonElement;
+      btn.type = "button";
+      btn.onclick = () => {
+        const open = desc.classList.toggle("open");
+        btn.textContent = open ? "收起" : "展开";
+      };
+      desc.after(btn);
+    });
+  }
+  return head;
+}
+
 // —— 首页：大标题 + 推荐歌单卡片网格（官方推荐 CGI，无需登录态） ——
 async function homeView(root: HTMLElement) {
   root.append(h("h1", "page-title", "首页"));
@@ -59,18 +97,14 @@ async function playlistView(root: HTMLElement, q: URLSearchParams) {
   }
   root.innerHTML = "";
 
-  const head = h("div", "pl-head");
   const logo = upPic(info?.picurl || "");
-  head.innerHTML = `
-    <button class="pl-back" aria-label="返回" title="返回"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6l-6 6 6 6"/></svg></button>
-    <div class="pl-art">${logo ? `<img src="${logo}" alt=""/>` : ""}</div>
-    <div class="pl-info">
-      <h1 class="pl-name">${info?.title ?? name}</h1>
-      <div class="pl-meta">${info?.creator?.nick ? `${info.creator.nick} 制作` : ""}${info?.songnum ? ` · ${info.songnum} 首` : ""}</div>
-      <div class="pl-desc muted">${(info?.desc || "").replace(/</g, "&lt;")}</div>
-    </div>`;
-  root.append(head);
-  head.querySelector<HTMLElement>(".pl-back")!.onclick = () => history.length > 1 ? history.back() : (location.hash = "#/");
+  const metaParts = [info?.creator?.nick ? `${info.creator.nick} 制作` : "", info?.songnum ? `${info.songnum} 首` : ""].filter(Boolean);
+  mountHead(root, {
+    artHtml: logo ? `<img src="${logo}" alt=""/>` : "",
+    name: info?.title ?? name,
+    meta: metaParts.join(" · "),
+    desc: info?.desc || "",
+  });
 
   const rows = h("div", "rows");
   root.append(rows);
@@ -82,21 +116,59 @@ async function playlistView(root: HTMLElement, q: URLSearchParams) {
   renderSongRows(rows, songs, hooks);
 }
 
-// —— 歌手页（点击行内歌手跳转的落点）：热门歌曲列表 ——
+// —— 歌手页（点击行内歌手跳转的落点）：信息头 + 热门歌曲 + 专辑网格（布局对齐歌单/专辑页） ——
 async function singerView(root: HTMLElement, q: URLSearchParams) {
   const mid = q.get("mid") || "";
   const name = decodeURIComponent(q.get("name") || "歌手");
-  root.append(h("h1", "page-title", name));
-  const box = h("div", "rows", `<div class="muted">加载中…</div>`);
-  root.append(box);
-  if (!mid) { box.innerHTML = `<div class="muted">缺少歌手 mid</div>`; return; }
-  try {
-    const d: any = await api(`/singer/${encodeURIComponent(mid)}/songs?num=50&page=1`);
-    const songs: any[] = d?.song_list ?? [];
-    if (!songs.length) { box.innerHTML = `<div class="muted">没有取到热门歌曲</div>`; return; }
-    renderSongRows(box, songs, { showAlbum: true, onPlay: (s, i, all) => player.playList(all, i) });
-  } catch (e: any) {
-    box.innerHTML = `<div class="muted">加载失败：${e.message}</div>`;
+  root.append(h("div", "rows", `<div class="muted">加载中…</div>`));
+  if (!mid) { (root.querySelector(".rows") as HTMLElement).innerHTML = `<div class="muted">缺少歌手 mid</div>`; return; }
+  // 四路并拉；简介/专辑失败不阻塞主内容（各 .catch 归 null）
+  const [homeInfo, detail, songData, albumData] = await Promise.all([
+    api<any>(`/singer/${encodeURIComponent(mid)}/info`).catch(() => null),
+    api<any>(`/singer/${encodeURIComponent(mid)}/desc`).catch(() => null),
+    api<any>(`/singer/${encodeURIComponent(mid)}/songs?num=50&page=1`).catch(() => null),
+    api<any>(`/singer/${encodeURIComponent(mid)}/albums?num=30`).catch(() => null),
+  ]);
+  root.innerHTML = "";
+
+  const base = homeInfo?.base_info ?? {};
+  const displayName = base.name || detail?.name || name;
+  const avatar = upPic(base.avatar || detail?.pic) ||
+    `https://y.gtimg.cn/music/photo_new/T001R300x300M000${mid}.jpg`;
+  const meta = [
+    detail?.foreign_name && detail.foreign_name !== displayName ? detail.foreign_name : "",
+    detail?.area, detail?.birthday,
+    songData?.total_num ? `歌曲 ${songData.total_num}` : "",
+    albumData?.total ? `专辑 ${albumData.total}` : "",
+  ].filter(Boolean).join(" · ");
+  mountHead(root, {
+    artHtml: `<img src="${avatar}" alt=""/>`,
+    artRound: true,
+    name: displayName,
+    meta,
+    desc: detail?.desc || "",
+  });
+
+  const songs: any[] = songData?.song_list ?? [];
+  if (!songs.length) { root.append(h("div", "rows muted", "没有取到热门歌曲")); return; }
+  root.append(h("h2", "sec-title", "热门歌曲"));
+  const rows = h("div", "rows");
+  root.append(rows);
+  renderSongRows(rows, songs, { showAlbum: true, onPlay: (s, i, all) => player.playList(all, i) });
+
+  const albums: any[] = albumData?.album_list ?? [];
+  if (albums.length) {
+    root.append(h("h2", "sec-title", "专辑"));
+    const grid = h("div", "grid");
+    grid.innerHTML = albums.map((x) => {
+      const pm: string = x.pmid || x.mid || "";
+      const cover = pm ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${pm.split("_")[0]}.jpg` : "";
+      const sub = [x.album_type, x.time_public].filter(Boolean).join(" · ");
+      return `<a class="card" href="#/album?mid=${encodeURIComponent(x.mid ?? "")}&name=${encodeURIComponent(x.name || "专辑")}">
+        <div class="art">${cover ? `<img src="${cover}" alt="" loading="lazy"/>` : ""}</div>
+        <div class="name">${escHtml(x.name || "专辑")}</div><div class="sub">${escHtml(sub)}</div></a>`;
+    }).join("");
+    root.append(grid);
   }
 }
 
@@ -115,17 +187,17 @@ async function albumView(root: HTMLElement, q: URLSearchParams) {
     root.innerHTML = "";
     const picMid = alb.pmid || alb.mid || mid;
     const singers: string = (alb.singer?.length ? alb.singer : detail?.singers ?? []).map((x: any) => x.name).join(" / ");
-    const head = h("div", "pl-head");
-    head.innerHTML = `
-      <button class="pl-back" aria-label="返回" title="返回"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6l-6 6 6 6"/></svg></button>
-      <div class="pl-art">${picMid ? `<img src="https://y.gtimg.cn/music/photo_new/T002R300x300M000${picMid.split("_")[0]}.jpg" alt=""/>` : ""}</div>
-      <div class="pl-info">
-        <h1 class="pl-name">${alb.name ?? "专辑"}</h1>
-        <div class="pl-meta">${singers}${alb.time_public ? ` · ${alb.time_public}` : ""}${list?.total_num ? ` · ${list.total_num} 首` : ""}</div>
-        <div class="pl-desc muted">${(alb.desc || "").replace(/</g, "&lt;")}</div>
-      </div>`;
-    root.append(head);
-    head.querySelector<HTMLElement>(".pl-back")!.onclick = () => history.length > 1 ? history.back() : (location.hash = "#/");
+    const metaParts = [
+      singers,
+      alb.time_public,
+      list?.total_num ? `${list.total_num} 首` : "",
+    ].filter(Boolean);
+    mountHead(root, {
+      artHtml: picMid ? `<img src="https://y.gtimg.cn/music/photo_new/T002R300x300M000${picMid.split("_")[0]}.jpg" alt=""/>` : "",
+      name: alb.name ?? "专辑",
+      meta: metaParts.join(" · "),
+      desc: alb.desc || "",
+    });
     const box = h("div", "rows");
     root.append(box);
     if (!songs.length) { box.innerHTML = `<div class="muted">没有取到歌曲</div>`; return; }
