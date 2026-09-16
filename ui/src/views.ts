@@ -19,16 +19,16 @@ const h = (tag: string, cls: string, html = "") => {
 const escHtml = (s: string) =>
   String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-const BACK_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6l-6 6 6 6"/></svg>`;
+export const BACK_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6l-6 6 6 6"/></svg>`;
 
 // 信息头（歌单/专辑/歌手共用）：左图 右「名称/详情/简介」整体上对齐；
 // 简介默认两行截断，文本真溢出时出「展开」按钮（点一下显全文，再点收回）。
+// 返回按钮不在这里——统一挂在壳层顶带（搜索框旁，见 shell.ts）。
 function mountHead(root: HTMLElement, opts: {
   artHtml: string; artRound?: boolean; name: string; meta: string; desc: string;
 }) {
   const head = h("div", "pl-head");
   head.innerHTML = `
-    <button class="pl-back" aria-label="返回" title="返回">${BACK_SVG}</button>
     <div class="pl-art${opts.artRound ? " round" : ""}">${opts.artHtml}</div>
     <div class="pl-info">
       <h1 class="pl-name">${escHtml(opts.name)}</h1>
@@ -36,7 +36,6 @@ function mountHead(root: HTMLElement, opts: {
       <div class="pl-desc muted">${escHtml(opts.desc)}</div>
     </div>`;
   root.append(head);
-  head.querySelector<HTMLElement>(".pl-back")!.onclick = () => history.length > 1 ? history.back() : (location.hash = "#/");
   const desc = head.querySelector<HTMLElement>(".pl-desc")!;
   if (opts.desc) {
     // 截断检测在下一帧做（-webkit-line-clamp 生效后 scrollHeight 才可比）
@@ -122,11 +121,12 @@ async function singerView(root: HTMLElement, q: URLSearchParams) {
   const name = decodeURIComponent(q.get("name") || "歌手");
   root.append(h("div", "rows", `<div class="muted">加载中…</div>`));
   if (!mid) { (root.querySelector(".rows") as HTMLElement).innerHTML = `<div class="muted">缺少歌手 mid</div>`; return; }
-  // 四路并拉；简介/专辑失败不阻塞主内容（各 .catch 归 null）
-  const [homeInfo, detail, songData, albumData] = await Promise.all([
+  // 五路并拉（热门/最新两种排序各拉一份）；简介/专辑失败不阻塞主内容（各 .catch 归 null）
+  const [homeInfo, detail, songData, newSongData, albumData] = await Promise.all([
     api<any>(`/singer/${encodeURIComponent(mid)}/info`).catch(() => null),
     api<any>(`/singer/${encodeURIComponent(mid)}/desc`).catch(() => null),
-    api<any>(`/singer/${encodeURIComponent(mid)}/songs?num=50&page=1`).catch(() => null),
+    api<any>(`/singer/${encodeURIComponent(mid)}/songs?num=50&page=1&order=1`).catch(() => null),
+    api<any>(`/singer/${encodeURIComponent(mid)}/songs?num=30&page=1&order=2`).catch(() => null),
     api<any>(`/singer/${encodeURIComponent(mid)}/albums?num=30`).catch(() => null),
   ]);
   root.innerHTML = "";
@@ -156,9 +156,22 @@ async function singerView(root: HTMLElement, q: URLSearchParams) {
   root.append(rows);
   renderSongRows(rows, songs, { showAlbum: true, onPlay: (s, i, all) => player.playList(all, i) });
 
+  // 最新发布（order=2 按发行时间倒序）：与热门同列风格，去掉与热门完全重合的条目
+  const hotKeys = new Set(songs.map((s) => s.mid));
+  const newSongs: any[] = ((newSongData?.song_list ?? []) as any[]).filter((s) => !hotKeys.has(s.mid));
+  if (newSongs.length) {
+    root.append(h("h2", "sec-title", "最新发布歌曲"));
+    const newRows = h("div", "rows");
+    root.append(newRows);
+    renderSongRows(newRows, newSongs, { showAlbum: true, onPlay: (s, i, all) => player.playList(all, i) });
+  }
+
   const albums: any[] = albumData?.album_list ?? [];
   if (albums.length) {
-    root.append(h("h2", "sec-title", "专辑"));
+    const secRow = h("div", "sec-row");
+    secRow.innerHTML = `<h2 class="sec-title" style="margin:0">专辑</h2>
+      <a class="sec-more" href="#/singer-albums?mid=${encodeURIComponent(mid)}&name=${encodeURIComponent(displayName)}">查看全部 ${albumData?.total ?? albums.length} 张 ›</a>`;
+    root.append(secRow);
     const grid = h("div", "grid");
     grid.innerHTML = albums.map((x) => {
       const pm: string = x.pmid || x.mid || "";
@@ -170,6 +183,48 @@ async function singerView(root: HTMLElement, q: URLSearchParams) {
     }).join("");
     root.append(grid);
   }
+}
+
+// —— 歌手全部专辑页：信息头复用歌手页样式 + 全部分页拉取专辑网格 ——
+async function singerAlbumsView(root: HTMLElement, q: URLSearchParams) {
+  const mid = q.get("mid") || "";
+  const name = decodeURIComponent(q.get("name") || "歌手");
+  root.append(h("div", "rows", `<div class="muted">加载中…</div>`));
+  if (!mid) { (root.querySelector(".rows") as HTMLElement).innerHTML = `<div class="muted">缺少歌手 mid</div>`; return; }
+  // 分页拉全：上游单页封顶 30（num 再大也只回 30），循环条件按 total + 空批兜底
+  const albums: any[] = [];
+  let total = 0;
+  try {
+    for (let page = 1; ; page++) {
+      const d: any = await api<any>(`/singer/${encodeURIComponent(mid)}/albums?num=30&page=${page}`);
+      const batch: any[] = d?.album_list ?? [];
+      albums.push(...batch);
+      total = d?.total ?? 0;
+      if (!batch.length || albums.length >= total) break;
+    }
+  } catch (e: any) {
+    if (!albums.length) { root.innerHTML = ""; root.append(h("div", "rows muted", `加载失败：${e.message}`)); return; }
+  }
+  root.innerHTML = "";
+  const avatar = `https://y.gtimg.cn/music/photo_new/T001R300x300M000${mid}.jpg`;
+  mountHead(root, {
+    artHtml: `<img src="${avatar}" alt=""/>`,
+    artRound: true,
+    name: `${name}的专辑`,
+    meta: total ? `共 ${total} 张` : "",
+    desc: "",
+  });
+  if (!albums.length) { root.append(h("div", "rows muted", "暂无专辑")); return; }
+  const grid = h("div", "grid");
+  grid.innerHTML = albums.map((x) => {
+    const pm: string = x.pmid || x.mid || "";
+    const cover = pm ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${pm.split("_")[0]}.jpg` : "";
+    const sub = [x.album_type, x.time_public].filter(Boolean).join(" · ");
+    return `<a class="card" href="#/album?mid=${encodeURIComponent(x.mid ?? "")}&name=${encodeURIComponent(x.name || "专辑")}">
+      <div class="art">${cover ? `<img src="${cover}" alt="" loading="lazy"/>` : ""}</div>
+      <div class="name">${escHtml(x.name || "专辑")}</div><div class="sub">${escHtml(sub)}</div></a>`;
+  }).join("");
+  root.append(grid);
 }
 
 // —— 专辑页（点击行内专辑跳转的落点）：detail + songs 两个端点 ——
@@ -645,6 +700,7 @@ export const views: Record<string, (root: HTMLElement, q: URLSearchParams) => Pr
   "/liked": likedView,
   "/playlist": playlistView,
   "/singer": singerView,
+  "/singer-albums": singerAlbumsView,
   "/album": albumView,
   "/settings": settingsView,
   "/log": logView,
