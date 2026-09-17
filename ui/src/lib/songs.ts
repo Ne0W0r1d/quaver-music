@@ -1,5 +1,5 @@
 // 歌单行渲染（跨视图复用；对齐设计稿：三行文字 + 单曲心形 + 双击播放 + 歌手/专辑跳转）
-import { api, songArtists, coverUrl, fmtTime } from "./api";
+import { api, coverUrl, fmtTime } from "./api";
 import { player } from "../player";
 
 export interface RowHooks {
@@ -40,8 +40,14 @@ player.on(() => {
 });
 
 function linkTo(kind: "singer" | "album", o: any, label: string): string {
-  if (!o?.mid) return esc(label);
+  if (!o?.mid) return esc(label); // 无 mid（如部分合唱署名）：退化成纯文本，不给死链
   return `<a class="meta-link" data-link="${kind}:${esc(o.mid)}:${esc(o.name ?? label)}" title="${esc(label)}">${esc(label)}</a>`;
+}
+
+/** 行内歌手区：多歌手（合唱/合作）逐个成链，以 " / " 分隔——整条链只挂第一个歌手 mid 的话，
+ *  点谁都跳到第一位歌手，所以这里必须按人拆链（点击路由见下方 [data-link] 委托）。 */
+function artistLinks(singers: any[] | undefined): string {
+  return (singers ?? []).map((a) => linkTo("singer", a, a?.name ?? "")).join(" / ");
 }
 
 export function renderSongRows(box: HTMLElement, songs: any[], hooks: RowHooks = {}) {
@@ -54,7 +60,7 @@ export function renderSongRows(box: HTMLElement, songs: any[], hooks: RowHooks =
     row.title = "双击播放";
     const pic = coverUrl(s, 150);
     const artistLine = hooks.showArtist === false ? "" :
-      `<span class="ra">${(s.singer ?? []).length ? linkTo("singer", s.singer[0], songArtists(s)) : ""}</span>`;
+      `<span class="ra">${(s.singer ?? []).length ? artistLinks(s.singer) : ""}</span>`;
     const albumLine = hooks.showAlbum ? `<span class="ral">${s.album?.name ? linkTo("album", s.album, s.album.name) : ""}</span>` : "";
     const loved = player.loved.has(s.mid);
     row.innerHTML = `<span class="idx">${i + 1}</span>
