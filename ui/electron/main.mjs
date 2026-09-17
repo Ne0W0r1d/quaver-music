@@ -19,6 +19,12 @@ const LOG = join(app.isPackaged ? app.getPath("userData") : UI_ROOT, "electron-d
 import { appendFileSync } from "node:fs";
 const log = (...a) => { const s = a.map((x) => (typeof x === "string" ? x : String(x))).join(" "); try { appendFileSync(LOG, s + "\n"); } catch {} console.log(s); };
 
+// 兜底护栏：主进程任何未捕获异常/未处理 rejection 都会让 Electron 弹
+// 「A JavaScript error occurred in the main process」并可能带走整个应用 —— 一次后台网络
+// 中断不该炸掉正在放歌的窗口。这里只记账不退场；真出问题时看日志定位，而不是让用户点 Ok。
+process.on("uncaughtException", (e) => log("[quaver] uncaught exception:", String((e && e.stack) || e)));
+process.on("unhandledRejection", (r) => log("[quaver] unhandled rejection:", String((r && r.stack) || r)));
+
 let win = null;
 let cachedUrl = null; // preview 服务器只起一次；CSD/SSD 重建窗口时复用
 let sidecar = null;   // 打包态自拉起的 Python sidecar 子进程

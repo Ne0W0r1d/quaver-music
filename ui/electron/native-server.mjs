@@ -3,6 +3,7 @@
 // Electron 主进程与独立 `node native-server.mjs` 都可使用。
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 
@@ -23,6 +24,28 @@ const MIME = {
 };
 
 const SIDECAR = process.env.QUAVER_API ?? "http://127.0.0.1:3200";
+
+// 流中继的可预期中断：客户端切歌/seek/关页面 → AbortError；上游（sidecar/CDN）半路断流
+// → undici 的 TypeError: terminated / premature close。都不是异常，只是常态。
+const EXPECTED_ABORT_CODES = new Set(["ABORT_ERR", "ERR_STREAM_PREMATURE_CLOSE", "ERR_STREAM_DESTROYED"]);
+function isExpectedAbort(e) {
+  if (!e) return true;
+  if (e.name === "AbortError" || (e.code && EXPECTED_ABORT_CODES.has(e.code))) return true;
+  return /terminated|premature close|aborted|socket hang up/i.test(String(e.message ?? e));
+}
+
+// 中继一条上游流并接管全部错误。
+// 别用 src.pipe(res)：pipe() 不转发 source 的 'error'，而 Readable.fromWeb(fetch().body)
+// 在上游断流/被 abort 时会 emit error —— 无人接管就是主进程的未捕获异常
+// （弹「A JavaScript error occurred in the main process」，堆栈落在 undici Fetch.onAborted）。
+// pipeline() 把 source/dest/abort 的错误都收敛到 promise，且 abort 会连带销毁两端。
+async function pipeStream(body, res, signal) {
+  try {
+    await pipeline(Readable.fromWeb(body), res, { signal });
+  } catch (e) {
+    if (!isExpectedAbort(e)) console.warn(`[quaver] relay stream aborted: ${e}`);
+  }
+}
 
 // —— 封面取色代理（与 relay.ts 同一白名单：主机 + 路径前缀，非开放代理）——
 const IMG_HOSTS = new Set(["y.gtimg.cn", "qpic.y.qq.com", "img.y.gtimg.cn", "pictax.qpic.cn"]);
@@ -117,12 +140,20 @@ export async function startQuaverServer({ dist, logFile, host = "127.0.0.1", por
       const range = req.headers["range"];
       if (range) headers.set("range", range); // 播放流 Range 中继必须透传
 
+      // 客户端断线（切歌 removeAttribute(src)+load()、seek、关页面）→ 立刻掐掉上游 fetch。
+      // 不掐的话会留下继续把整首歌拉完的僵尸流（流量白烧），且它被上游中断时 undici 抛
+      // TypeError: terminated —— 那正是主进程弹框的根因。abort 由 res 的 close 驱动。
+      const ac = new AbortController();
+      const onClientGone = () => { if (!res.writableFinished) ac.abort(); };
+      res.once("close", onClientGone);
+
       try {
         const upstream = await fetch(target, {
           method: req.method,
           headers,
           body: await readBody(req),
           redirect: "manual",
+          signal: ac.signal,
         });
         // 播放流（/api/stream/<token>）：流式管道，绝不整段缓冲（边下边播 + 省内存）
         if (/^\/stream\/[^/]+$/.test(sub) && upstream.body) {
@@ -131,7 +162,7 @@ export async function startQuaverServer({ dist, logFile, host = "127.0.0.1", por
             if (k === "transfer-encoding" || k === "content-encoding" || k === "connection") return;
             res.appendHeader(k, v);
           });
-          Readable.fromWeb(upstream.body).pipe(res);
+          await pipeStream(upstream.body, res, ac.signal);
           return;
         }
         res.statusCode = upstream.status;
@@ -142,9 +173,12 @@ export async function startQuaverServer({ dist, logFile, host = "127.0.0.1", por
         });
         res.end(Buffer.from(await upstream.arrayBuffer()));
       } catch (e) {
+        if (res.destroyed || res.writableEnded) return; // 客户端已走，再写只会抛 ERR_STREAM_DESTROYED
         res.statusCode = 502;
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify({ code: -1, msg: `sidecar unreachable: ${e}` }));
+      } finally {
+        res.off("close", onClientGone);
       }
       return;
     }

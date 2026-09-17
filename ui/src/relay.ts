@@ -12,6 +12,31 @@ const SIDECAR = process.env.QUAVER_API ?? "http://127.0.0.1:3200";
 const json = (obj: unknown, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
 
+// 流中继的可预期中断：客户端切歌/seek/关页面 → AbortError；上游（sidecar/CDN）半路断流
+// → undici 的 TypeError: terminated / premature close。都不是异常，只是常态。
+const EXPECTED_ABORT_CODES = new Set(["ABORT_ERR", "ERR_STREAM_PREMATURE_CLOSE", "ERR_STREAM_DESTROYED"]);
+function isExpectedAbort(e: unknown): boolean {
+  const err = e as { name?: string; code?: string; message?: string } | null;
+  if (!err) return true;
+  if (err.name === "AbortError" || (err.code && EXPECTED_ABORT_CODES.has(err.code))) return true;
+  return /terminated|premature close|aborted|socket hang up/i.test(String(err.message ?? ""));
+}
+
+// 中继一条上游流并接管全部错误。
+// 别用 src.pipe(res)：pipe() 不转发 source 的 'error'，而 Readable.fromWeb(fetch().body)
+// 在上游断流/被 abort 时会 emit error —— 无人接管就是主进程的未捕获异常
+// （弹「A JavaScript error occurred in the main process」，堆栈落在 undici Fetch.onAborted）。
+// pipeline() 把 source/dest/abort 的错误都收敛到 promise，且 abort 会连带销毁两端。
+async function pipeStream(body: ReadableStream<Uint8Array>, res: ServerResponse, signal: AbortSignal) {
+  const { Readable } = await import("node:stream");
+  const { pipeline } = await import("node:stream/promises");
+  try {
+    await pipeline(Readable.fromWeb(body as never), res, { signal });
+  } catch (e) {
+    if (!isExpectedAbort(e)) console.warn(`[relay] stream aborted: ${e}`);
+  }
+}
+
 function readBody(req: IncomingMessage): Promise<Uint8Array | undefined> {
   if (req.method === "GET" || req.method === "HEAD") return Promise.resolve(undefined);
   return new Promise((res, rej) => {
@@ -89,12 +114,20 @@ export function apiRelay(): Connect.NextHandleFunction {
     const range = req.headers["range"];
     if (range) headers.set("range", range); // 播放流 Range 中继必须透传
 
+    // 客户端断线（切歌 removeAttribute(src)+load()、seek、关页面）→ 立刻掐掉上游 fetch。
+    // 不掐的话会留下继续把整首歌拉完的僵尸流（流量白烧），且它被上游中断时 undici 抛
+    // TypeError: terminated —— 那正是主进程弹框的根因。abort 由 res 的 close 驱动。
+    const ac = new AbortController();
+    const onClientGone = () => { if (!res.writableFinished) ac.abort(); };
+    res.once("close", onClientGone);
+
     try {
       const upstream = await fetch(target, {
         method: req.method,
         headers,
         body: (await readBody(req)) as BodyInit | undefined,
         redirect: "manual",
+        signal: ac.signal,
       });
       // 播放流（/api/stream/<token>）：流式管道，绝不整段缓冲（边下边播 + 省内存）
       if (/^stream\/[^/]+$/.test(path) && upstream.body) {
@@ -103,8 +136,7 @@ export function apiRelay(): Connect.NextHandleFunction {
           if (k === "transfer-encoding" || k === "content-encoding" || k === "connection") return;
           res.appendHeader(k, v);
         });
-        const { Readable } = await import("node:stream");
-        Readable.fromWeb(upstream.body as any).pipe(res);
+        await pipeStream(upstream.body, res, ac.signal);
         return;
       }
       res.statusCode = upstream.status;
@@ -115,10 +147,13 @@ export function apiRelay(): Connect.NextHandleFunction {
       });
       res.end(Buffer.from(await upstream.arrayBuffer()));
     } catch (e) {
+      if (res.destroyed || res.writableEnded) return; // 客户端已走，再写只会抛 ERR_STREAM_DESTROYED
       const r = json({ code: -1, msg: `sidecar unreachable: ${e}` }, 502);
       res.statusCode = r.status;
       r.headers.forEach((v, k) => res.appendHeader(k, v));
       res.end(Buffer.from(await r.arrayBuffer()));
+    } finally {
+      res.off("close", onClientGone);
     }
   };
 }
