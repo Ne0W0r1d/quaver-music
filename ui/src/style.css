@@ -573,6 +573,8 @@ html:not([data-theme="dark"]) .fav-btn.failed { background: #fdecec; border-colo
 html:not([data-theme="dark"]) .ghost-btn.danger:hover { background: #fdecec; border-color: #f3b4b4; color: #c62828; }
 .ghost-btn.danger:hover { border-color: #d33; color: #e66; }
 .ghost-btn:not(.danger):hover { border-color: var(--ink2); }
+.ghost-btn:disabled { opacity: .5; cursor: not-allowed; }
+.ghost-btn:disabled:hover { border-color: var(--line); }
 
 /* ===================== 设置视图（对齐设计稿：分区标题 + 选项卡组 + 单选 + 下拉） ===================== */
 .set-view { max-width: 640px; padding-bottom: 12px; }
@@ -603,15 +605,22 @@ html:not([data-theme="dark"]) .ghost-btn.danger:hover { background: #fdecec; bor
 .opt-card.q .q-lock { font-size: 10px; color: #ff8a3c; font-style: normal; }
 #quality-grid { max-width: 452px; } /* 约束为 4+3 换行（对齐设计稿） */
 
-/* 字体/后端等「标签 + 下拉」行 */
+/* 字体/后端/配置文件路径等「标签 + 输入」行 */
 .set-field { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; }
 .set-field > span { font-size: 13px; font-weight: 600; }
-.set-field select {
+.set-field select, .set-field input {
   align-self: flex-start; min-width: 220px; padding: 7px 12px; border-radius: 9px;
   border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; font: inherit;
 }
-.set-field select:disabled { opacity: .55; cursor: not-allowed; }
-.set-field select:not(:disabled):hover { border-color: var(--ink2); }
+.set-field select:disabled, .set-field input:disabled { opacity: .55; cursor: not-allowed; }
+.set-field select:not(:disabled):hover, .set-field input:not(:disabled):hover { border-color: var(--ink2); }
+/* 只读路径框：等宽字体方便照着敲，宽度随内容伸缩 */
+.set-field input[readonly] { cursor: text; width: 100%; max-width: 640px; font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 12.5px; }
+/* 字体设置：预设下拉 + 可直接编辑的 font-family 输入框（同一行，窄窗自动换行） */
+.set-field .font-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; width: 100%; }
+.set-field .font-row select { min-width: 190px; }
+.set-field .font-row input { flex: 1; min-width: 240px; cursor: text; font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 12.5px; }
+.set-view code { padding: 1px 6px; border-radius: 6px; background: var(--ph); font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 12.5px; }
 
 /* 解码后端单选 */
 .opt-radios { display: flex; gap: 18px; align-items: center; }

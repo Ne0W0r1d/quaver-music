@@ -1,6 +1,7 @@
 // Quaver — 浏览器侧 API 封装（全部走同源 /api 中继 → Python sidecar :3200）
 // 响应信封：{code:0,msg:"ok",data:...}；错误 {code:-1,msg:...} + HTTP 状态。
 import { getFallbackSort } from "./prefs";
+import { cfg, cfgSet } from "./config";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -74,13 +75,13 @@ export const QUALITIES = {
 } as const;
 export type Quality = keyof typeof QUALITIES;
 
+// 默认音质存在 quaver.conf 的 [Quality] DefaultQuality（Auto｜128｜320｜flac｜640ogg｜atmos2｜atmos51｜master）
 export function getQuality(): Quality | "auto" {
-  const q = localStorage.getItem("quaver.quality.v1");
-  if (q === "auto" || (q && q in QUALITIES)) return q as Quality | "auto";
-  return "auto"; // 默认自动：协商到会员可及的最高档（臻品母带优先）
+  const q = cfg("Quality.DefaultQuality", "Auto");
+  return q && q !== "Auto" && q in QUALITIES ? (q as Quality) : "auto";
 }
 export function setQuality(q: Quality | "auto") {
-  localStorage.setItem("quaver.quality.v1", q);
+  cfgSet({ "Quality.DefaultQuality": q === "auto" ? "Auto" : q });
 }
 
 // —— 播放条音质切换：会话级覆盖（不写入 localStorage；重启回到设置页默认）。

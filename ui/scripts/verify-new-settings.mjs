@@ -18,13 +18,13 @@ const step = async (name, fn) => {
 await page.goto(`${BASE}/index.html#/settings`, { waitUntil: "networkidle2" });
 await sleep(800);
 
-// 1) 干净 profile：默认音质 = auto（无 localStorage 时也选中「自动」）
+// 1) 干净 profile：默认音质 = auto（配置文件无覆盖时也选中「自动」）
 await step("默认音质=auto", async () => {
-  const st = await page.evaluate(() => localStorage.getItem("quaver.quality.v1"));
-  if (st !== null) throw new Error("localStorage polluted: " + st);
+  const st = await page.evaluate(() => window.__cfg.get("Quality.DefaultQuality"));
+  if (st !== "Auto") throw new Error("DefaultQuality=" + st);
   const sel = await page.$eval("#quality-grid .sel", (el) => el.dataset.q);
   if (sel !== "auto") throw new Error("selected=" + sel);
-  return "selected auto, nothing stored";
+  return "selected auto, conf stays Auto";
 });
 
 // 2) 设置页新开关
@@ -33,8 +33,8 @@ await step("Fallback 排序开关（默认不优先全景声）", async () => {
   if (s !== "no-atmos") throw new Error("sel=" + s);
   await page.click('#qfallback-cards [data-opt="rank"]');
   await sleep(120);
-  const after = await page.evaluate(() => ({ sel: document.querySelector("#qfallback-cards .sel")?.dataset.opt, stored: localStorage.getItem("quaver.qfallback.v1") }));
-  if (after.sel !== "rank" || after.stored !== "rank") throw new Error(JSON.stringify(after));
+  const after = await page.evaluate(() => ({ sel: document.querySelector("#qfallback-cards .sel")?.dataset.opt, stored: window.__cfg.get("Quality.FallbackToQMAtmos") }));
+  if (after.sel !== "rank" || after.stored !== "True") throw new Error(JSON.stringify(after));
   await page.click('#qfallback-cards [data-opt="no-atmos"]');
   return "toggle + persist ok";
 });
@@ -43,7 +43,7 @@ await step("关闭按钮行为开关（默认缩放到托盘）", async () => {
   if (s !== "tray") throw new Error("sel=" + s);
   await page.click('#close-cards [data-opt="quit"]');
   await sleep(120);
-  const after = await page.evaluate(() => ({ sel: document.querySelector("#close-cards .sel")?.dataset.opt, stored: localStorage.getItem("quaver.closeaction.v1") }));
+  const after = await page.evaluate(() => ({ sel: document.querySelector("#close-cards .sel")?.dataset.opt, stored: window.__cfg.get("Window.CloseAction") }));
   if (after.sel !== "quit" || after.stored !== "quit") throw new Error(JSON.stringify(after));
   await page.click('#close-cards [data-opt="tray"]');
   return "toggle + persist ok (browser dev: bridge absent = no-op)";

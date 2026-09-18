@@ -2,7 +2,7 @@
 # Quaver — QQ 音乐扫码登录助手（终端版，适配 Python sidecar :3200）
 # 流程：GET /login/qrcode/<type> → zbarimg 解 URL → qrencode 终端渲染 →
 #       轮询 /login/qrcode/<type>/status；DONE 后 sidecar 自己把 Credential
-#       存进 ~/.config/quaver/credential.json（0600）——本脚本不落 token。
+#       存进配置目录的 credential.json（0600，Linux ~/.config/quaver-music）——本脚本不落 token。
 #
 # 用法:  ./scripts/qq-login.sh [mobile|qq|wx]
 #   mobile = 手机 QQ 音乐 App 扫码（推荐，MQTT 推送）; qq = 手机 QQ; wx = 微信
@@ -36,7 +36,7 @@ echo "[2/3] 等待扫码 ..."
 for _ in $(seq 1 80); do
   EVENT=$(curl -s -m 15 "$BASE/login/qrcode/$CHANNEL/status?identifier=$IDENT" | jq -r '.data.event // -1')
   case "$EVENT" in
-    0) echo; echo "[3/3] ✅ 登录成功，凭证已由 sidecar 存至 ~/.config/quaver/credential.json"
+    0) echo; echo "[3/3] ✅ 登录成功，凭证已由 sidecar 存至配置目录的 credential.json（Linux ~/.config/quaver-music）"
        curl -s "$BASE/login/status" | jq '{logged_in: .data.logged_in, musicid: .data.credential.musicid}'
        exit 0 ;;
     1|2) printf '.' ;;

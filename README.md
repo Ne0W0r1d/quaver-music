@@ -27,7 +27,7 @@ Quaver Music，是一款 QQ 音乐的第三方客户端，其目的是为了让 
 
 然而 QQ 音乐一直没有什么好用的第三方客户端，而同 TME 系的有 [MoeKoe](https://music.moekoe.cn/) ，而转机是在 [Lyrune](https://github.com/amtoaer/lyrune)，一个挺好用的 Rust Q 音第三方客户端，但可惜 Rust 太重了，而且我 Rust 是真的菜。
 
-所以使用 Electron，对接入 NodeJS 的 API 而言也很方便，开发也很快，也可以避免我孱弱的 Rust 开发，与此同时，后端我也能玩 C++ 这一个我更熟悉的编程语言。故此项目诞生，现正在 Prototype 阶段，逐步新增功能。
+所以使用 Electron，对接入 NodeJS 的 API 而言也很方便，开发也很快，也可以避免我孱弱的 Rust 开发，与此同时，后端我也能玩 C++ 这一个我更熟悉的编程语言（虽然最后变成了 TypeScript + Python）。故此项目诞生，现正在 Prototype 阶段，逐步新增功能。
 
 # 目标
 
@@ -61,11 +61,16 @@ z：修补版本号
 
 - [x] 代号为 `Typhoeus` 的统一后端（集合现在的 Quaver SAL，抽象部分 API 能力 + 自实现播放后端，使用 AGPLv3 协议开源，在考虑因此学习 Zig 还是重新开始 Rust 还是复习 C++ ）
 - [x] MPRIS 支持（使用 `Typhoeus` 后端实现）
-- [ ] XDG Desktop Portal Inhibit 协议与 Logind 直连睡眠抑制器实现（使用 `Typhoeus` 后端实现） 
-- [ ] 使用 PythonAPI 完善后端功能（使用 `Typhoeus` 后端抽象实现）
+- [x] 使用 PythonAPI 完善后端功能（使用 `Typhoeus` 后端抽象实现）
 - [ ] 清理 Bugs
 
 并在未来的 FEP 版本中，加入呼声较高的功能，或未完成实现的功能。
+
+# 配置
+
+设置与登录凭证都在系统标准配置目录（Linux `~/.config/quaver-music`，Windows `%AppData%\Quaver Music`，
+macOS `~/Library/Application Support/Quaver Music`）—— 换版本、重装都不丢。`quaver.conf` 是 INI，可直接手改
+（程序只改对应键那一行，注释保留）。细节见 [ui/README.md](ui/README.md)。
 
 # 协议
 

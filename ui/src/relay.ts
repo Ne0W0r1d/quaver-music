@@ -1,6 +1,6 @@
 // Quaver — 同源 API 中继（dev/preview 中间件）
 // 浏览器 -> /api/* -> Python sidecar :3200（FastAPI, vendor/Typhoeus/quaver_server）。
-// 会话凭证（Credential）由 sidecar 持久化在 ~/.config/quaver/credential.json（0600），
+// 会话凭证（Credential）由 sidecar 持久化在系统配置目录（Linux ~/.config/quaver-music/credential.json，0600），
 // token 完全不进浏览器侧——所以这里只剩纯透传 + 封面代理。
 import type { Connect } from "vite";
 import type { IncomingMessage, ServerResponse } from "node:http";

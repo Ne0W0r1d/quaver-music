@@ -22,6 +22,9 @@
     写 `~/.config/quaver/credential.json`(0600)，浏览器全程拿不到 token。
   - 设备指纹 `~/.local/state/quaver/device.json`（SDK device_path）。
   - `CredentialInvalidError` → 自动 `login.refresh_credential()` 重试一次
+
+> 更新：这两个文件后来统一挪进了系统配置目录（Linux `~/.config/quaver-music/`，与 `quaver.conf` 同目录），
+> 旧的 `~/.config/quaver`、`~/.local/state/quaver` 在首次运行时自动搬迁。见 `ui/electron/config.mjs`。
     （refresh_token 续期是 Python 库的硬优势）。
 - 响应信封 `{code:0,msg:"ok",data}`；UI `api()` 统一解包，错误抛 `ApiError(msg)`。
 

@@ -113,10 +113,10 @@ await step("quality: 浮窗打开并切换会话档", async () => {
 });
 
 // 5) 会话级不持久化
-await step("quality: 会话选择不写 localStorage", async () => {
-  const stored = await page.evaluate(() => localStorage.getItem("quaver.quality.v1"));
+await step("quality: 会话选择不写配置", async () => {
+  const stored = await page.evaluate(() => window.__cfg.get("Quality.DefaultQuality"));
   if (stored === "320") throw new Error("session quality persisted!");
-  return `ls=${stored}`;
+  return `conf.DefaultQuality=${stored}`;
 });
 
 // 6) 加载中再点播放 = 取消，不永久转圈
