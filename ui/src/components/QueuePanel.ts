@@ -32,9 +32,20 @@ export function QueuePanel(): HTMLElement {
   // —— 形态切换：停靠 / 浮窗 ——
   const contentEl = () => document.querySelector<HTMLElement>(".content");
   const contentBody = () => document.querySelector<HTMLElement>(".content-body");
+  const npEl = () => document.querySelector<HTMLElement>(".np");
   const dockable = () => { const c = contentEl(); return !!c && c.clientWidth >= DOCK_MIN_CONTENT; };
   function syncMount() {
     const open = player.queueOpen;
+    // —— 正在播放全屏页：一律浮窗（固定右侧的通栏 dock 会把歌词区挤失衡，实测弃用）。
+    // float 挂 body、z:70 浮在全屏层（z:50）之上，开关仍由播放条队列按钮驱动；
+    // 收回全屏页后走下方正常逻辑按宽度停靠/浮窗。
+    if (npEl() && player.expanded) {
+      el.classList.remove("dock");
+      el.classList.add("float");
+      if (el.parentElement !== document.body) document.body.append(el);
+      el.classList.toggle("open", open);
+      return;
+    }
     el.classList.toggle("open", open);
     // 关闭时保持原位收起（避免「停靠位 → 右下角」的收起动画瞬移）；打开时按宽度定形态
     const dock = open ? dockable() : el.classList.contains("dock");

@@ -82,6 +82,24 @@ export function toBarColors(c: RGB | null) {
   };
 }
 
+// 供 UI 高亮 / 条目背景染色的颜色对（与 toBarColors 同源提取，亮度用途不同）：
+//   accent = 强调色（选中文字 / 激活态前景 / 左侧条 / 描边），亮度 0.5 适合作前景强调，
+//            深/浅主题下都能与背景拉开对比；
+//   glow   = 柔和背景基色（亮 0.62），CSS 用 color-mix 叠低 alpha 混进条目背景，
+//            避免大块色块抢眼。灰封面同样压低饱和保留灰调，不强行上色。
+// 输出纯 rgb() 字符串（不带 alpha），透明度交给 CSS（明暗主题可不同混合比例）。
+export function toUiColors(c: RGB | null) {
+  if (!c) return null;
+  const hsl = rgb2hsl(c);
+  const s = hsl.s < 0.12 ? Math.min(0.18, hsl.s * 1.5) : Math.max(hsl.s, 0.5);
+  const accent = hsl2rgb(hsl.h, s, 0.5);
+  const glow = hsl2rgb(hsl.h, Math.min(1, s * 1.05), 0.62);
+  return {
+    accent: `rgb(${accent.r},${accent.g},${accent.b})`,
+    glow: `rgb(${glow.r},${glow.g},${glow.b})`,
+  };
+}
+
 export async function extractCoverColor(url: string): Promise<RGB | null> {
   if (!url) return null;
   if (cache.has(url)) return cache.get(url)!;

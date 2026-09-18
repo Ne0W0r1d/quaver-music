@@ -12,6 +12,7 @@ import { NowPlaying } from "./components/NowPlaying";
 import { QueuePanel } from "./components/QueuePanel";
 import { SearchBox } from "./components/SearchBox";
 import { views, BACK_SVG } from "./views";
+import { extractCoverColor, toUiColors, type RGB } from "./lib/color";
 
 export const nav = [
   { path: "#/", label: "首页", icon: "home" },
@@ -77,6 +78,10 @@ export async function renderRoute() {
   const view = views[path] ?? views["/"];
   state.route.innerHTML = "";
   state.route.scrollTop = 0;
+  // 进入动画：entering class 在子元素挂载前就挂上 —— view 填充的新节点一进 DOM 即匹配
+  // .route.entering>* 选择器，从 from 态（opacity:0）开始播放，避免先 paint 出 1 再跳回 0 闪烁。
+  // class 常驻：下次切视图 innerHTML 清空 + 新子元素挂载，自动重新匹配播放，无需 reflow 重启。
+  state.route.classList.add("entering");
   try {
     const cleanup = await view(state.route, query);
     if (typeof cleanup === "function") mountedCleanup = cleanup;
@@ -85,6 +90,21 @@ export async function renderRoute() {
     state.route.innerHTML = `<div class="muted">页面加载失败：${String((e as Error).message ?? e)}</div>`;
   }
   player.markActive();
+}
+
+// UI 染色：把封面主色提升到 :root 的 --cvg-accent / --cvg-glow，供全局高亮/条目背景消费。
+// 与 ambient 环境层同源（同张封面），无色（未播放/中继不可用）则移除变量，CSS 回落默认强调色。
+// 与 PlayerBar 的 --tint/--tint-line 互不干扰：播放条进度条仍用自己的颜色对。
+function applyCoverTint(rgb: RGB | null) {
+  const root = document.documentElement;
+  const c = toUiColors(rgb);
+  if (!c) {
+    root.style.removeProperty("--cvg-accent");
+    root.style.removeProperty("--cvg-glow");
+    return;
+  }
+  root.style.setProperty("--cvg-accent", c.accent);
+  root.style.setProperty("--cvg-glow", c.glow);
 }
 
 export function bootShell() {
@@ -99,7 +119,7 @@ export function bootShell() {
     const pic = player.current ? coverUrl(player.current, 300) : "";
     if (pic === ambPic) return;
     ambPic = pic;
-    if (!pic) { ambArt.classList.remove("ready"); return; }
+    if (!pic) { ambArt.classList.remove("ready"); applyCoverTint(null); return; }
     const img = new Image();
     img.onload = () => {
       if (ambPic !== pic) return; // 期间已换曲
@@ -108,6 +128,9 @@ export function bootShell() {
     };
     img.onerror = () => { if (ambPic === pic) ambArt.classList.remove("ready"); }; // 封面 404：保持中性底
     img.src = pic;
+    // UI 高亮/条目背景染色：与 ambient 同源，提取主色写入 :root 供全局消费
+    // （extractCoverColor 有 url 缓存，与 PlayerBar 各取一份不重复请求网络）
+    void extractCoverColor(pic).then((rgb) => { if (ambPic === pic) applyCoverTint(rgb); });
   });
 
   const frame = document.createElement("div");
