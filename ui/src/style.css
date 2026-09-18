@@ -157,8 +157,11 @@ body:not(.ssd) .content-top .top-center { -webkit-app-region: no-drag; cursor: d
 body:not(.ssd) .content-top .sb-field input { user-select: text; }
 .content-top::before, .content-top::after { content: ""; flex: 0 0 0; }
 body:not(.ssd) .content-top::before, body:not(.ssd) .content-top::after { flex-basis: 134px; } /* 左右对称：按钮簇宽120 + 间隙 */
-/* 路由视图区：renderRoute 只重建这里，搜索框（顶带流内）不受影响 */
-.route { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 24px 20px; }
+/* 路由视图区：renderRoute 只重建这里，搜索框（顶带流内）不受影响。
+   .content-body = route 与停靠态队列面板的横向 flex 容器：面板停靠时 route 让宽，
+   面板不挂载（浮窗态/关闭）时 route 独占整行 —— 主页/搜索/歌手页随宽度整体缩放。 */
+.content-body { flex: 1; min-height: 0; display: flex; min-width: 0; }
+.route { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 6px 24px 20px; }
 
 /* —— 全局滚动条：细圆条、透明轨道、悬停加深（不做大滑块） ——
    宽槽(10px) + 3px 透明描边 + background-clip：可见滑块只占 4px，轨道完全不画底色，
@@ -534,26 +537,62 @@ html:not([data-theme="dark"]) .fav-btn.failed { background: #fdecec; border-colo
   to { transform: translateX(var(--mx, -70px)); }
 }
 
-/* ===================== 队列面板 ===================== */
+/* ===================== 队列面板（播放列表） =====================
+   双形态：
+   .float = 浮窗：宽度不够时挂 body，fixed 于窗口右下、悬在内容之上（z 在播放页之上）；
+   .dock  = 停靠：内容区宽度足够时挂进 .content-body 右缘（flex 行内 300px 定宽），
+            路由视图区自动让宽；关闭时 display:none，route 立刻铺满。 */
 .queue-panel {
-  position: fixed; right: 14px; bottom: 88px; z-index: 70; width: 320px; max-height: 52vh;
-  background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 16px 48px #00000026;
   display: flex; flex-direction: column; overflow: hidden;
+  background: var(--card); color: var(--ink);
+}
+.queue-panel.float {
+  position: fixed; right: 14px; bottom: 88px; z-index: 70; width: 320px; max-height: 52vh;
+  border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 16px 48px #00000026;
   opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity .18s, transform .18s;
 }
-.queue-panel.open { opacity: 1; pointer-events: auto; transform: none; }
-.qp-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; font-weight: 700; border-bottom: 1px solid var(--line); }
-.qp-close { border: 0; background: transparent; color: var(--ink2); cursor: pointer; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; }
-.qp-close:hover { background: var(--hover); }
-.qp-list { overflow-y: auto; padding: 6px; }
-.qp-item { display: flex; gap: 8px; align-items: center; padding: 7px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+.queue-panel.float.open { opacity: 1; pointer-events: auto; transform: none; }
+.queue-panel.dock {
+  flex: 0 0 300px; width: 300px; min-width: 0; min-height: 0;
+  border-left: 1px solid var(--line);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+.queue-panel.dock:not(.open) { display: none; }
+.qp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px 10px 14px; font-weight: 700; border-bottom: 1px solid var(--line); }
+.qp-title { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.qp-cnt { font-style: normal; font-weight: 400; font-size: 11.5px; color: var(--idx); }
+.qp-actions { display: flex; gap: 2px; }
+.qp-act { border: 0; background: transparent; color: var(--ink2); cursor: pointer;
+  width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; padding: 0; }
+.qp-act:hover { background: var(--hover); color: var(--ink); }
+.qp-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; }
+.qp-item { display: flex; gap: 7px; align-items: center; padding: 6px 8px 6px 4px;
+  border-radius: 8px; cursor: pointer; font-size: 13px; }
 .qp-item:hover { background: var(--row-hover); }
 .qp-item.cur { background: var(--tint-row); color: var(--acc); font-weight: 600; }
-.qi-i { width: 18px; text-align: right; color: var(--idx); font-size: 11px; flex: 0 0 auto; }
+/* 拖拽中的行：留在文档流（transform 只做视觉位移），浮起 + 投影盖过邻行 */
+.qp-item.dragging { position: relative; z-index: 2; background: var(--row-hover);
+  box-shadow: 0 8px 22px #00000038; opacity: .94; }
+.qi-grip { width: 14px; flex: 0 0 auto; display: grid; place-items: center;
+  color: var(--idx); opacity: 0; cursor: grab; touch-action: none; transition: opacity .12s; }
+.qp-item:hover .qi-grip { opacity: .8; }
+.qp-item.dragging .qi-grip { cursor: grabbing; opacity: .8; }
+.qi-thumb { width: 34px; height: 34px; flex: 0 0 auto; border-radius: 6px; overflow: hidden; background: var(--ph); }
+.qi-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.qi-i { width: 16px; text-align: right; color: var(--idx); font-size: 11px; flex: 0 0 auto; }
 .qp-item.cur .qi-i { color: var(--acc); }
-.qi-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.qi-a { margin-left: auto; color: var(--ink2); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; flex: 0 0 auto; }
-.qp-empty { color: var(--idx); font-size: 12.5px; text-align: center; padding: 18px; }
+.qi-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.qi-n, .qi-a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qi-a { font-size: 11px; color: var(--ink2); font-weight: 400; }
+.qi-del { border: 0; background: transparent; color: var(--idx); cursor: pointer;
+  width: 22px; height: 22px; flex: 0 0 auto; display: grid; place-items: center;
+  border-radius: 6px; padding: 0; opacity: 0; transition: opacity .12s; }
+.qp-item:hover .qi-del { opacity: 1; }
+.qi-del:hover { background: var(--press); color: var(--ink); }
+.qp-empty { color: var(--idx); font-size: 12.5px; text-align: center; padding: 24px 18px;
+  display: flex; flex-direction: column; gap: 4px; }
+.qp-empty span { font-size: 11.5px; opacity: .8; }
 
 /* ===================== 登录页 ===================== */
 .login-wrap { max-width: 460px; margin: calc(4vh + 26px) auto 0; text-align: center; }

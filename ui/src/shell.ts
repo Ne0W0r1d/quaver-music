@@ -141,7 +141,11 @@ export function bootShell() {
       </aside>
       <main class="content">
         <div class="content-top"></div>
-        <div class="route" id="route"></div>
+        <div class="content-body">
+          <div class="route" id="route"></div>
+          <!-- 队列面板停靠位：QueuePanel 宽度足够时挂到这里（.dock），route 自动让宽；
+               宽度不够时挂回 body 变浮窗（.float）。挂载由 QueuePanel 自身管理。 -->
+        </div>
       </main>
     </div>
   `;

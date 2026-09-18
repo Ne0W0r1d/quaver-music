@@ -298,6 +298,42 @@ class Player {
     this.notify();
   }
 
+  /** 从队列移除第 i 首。删除的是当前曲：停流停在原地（指针落到同槽位的下一首），不自动续播；
+   *  删当前曲之前的歌：指针前移；删之后的歌：指针不动。 */
+  removeAt(i: number) {
+    if (i < 0 || i >= this.queue.length) return;
+    const cur = this.index;
+    this.queue.splice(i, 1);
+    if (!this.queue.length) { this.index = -1; this.interrupt(); this.notify(); return; }
+    if (i < cur) this.index = cur - 1;
+    else if (i === cur) {
+      this.index = Math.min(cur, this.queue.length - 1);
+      this.interrupt();
+    }
+    this.notify();
+  }
+
+  /** 队列内排序：把 from 位置的歌挪到 to。当前曲指针始终跟随这首歌本身走。 */
+  moveInQueue(from: number, to: number) {
+    const n = this.queue.length;
+    if (from === to || from < 0 || to < 0 || from >= n || to >= n) return;
+    const [s] = this.queue.splice(from, 1);
+    this.queue.splice(to, 0, s);
+    if (this.index === from) this.index = to;
+    else if (from < this.index && to >= this.index) this.index--;
+    else if (from > this.index && to <= this.index) this.index++;
+    this.notify();
+  }
+
+  /** 清空队列并停止播放 */
+  clearQueue() {
+    if (!this.queue.length && this.index < 0) { this.notify(); return; }
+    this.queue = [];
+    this.index = -1;
+    this.interrupt();
+    this.notify();
+  }
+
   jump(i: number) {
     if (i < 0 || i >= this.queue.length) return;
     this.index = i;
