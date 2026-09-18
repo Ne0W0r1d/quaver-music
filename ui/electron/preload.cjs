@@ -20,6 +20,20 @@ contextBridge.exposeInMainWorld("quaverMpris", {
     }),
 });
 
+// 配置文件（quaver.conf）：启动时**同步**取一份快照，之后改一项写一项。
+// 为什么是 sendSync：渲染层模块（player 实例化 / prefs 读值）在 ESM import 阶段就跑完，
+// 静态 import 提升让任何 await 都排在它们之后 —— 异步取配置会让启动期全落在默认值上。
+// 主进程负责平台路径解析 / 值域校验 / 原子落盘与权限，渲染层只认 "Section.Key" → 字符串。
+let configBoot = { ok: false };
+try { configBoot = ipcRenderer.sendSync("quaver:config-sync") || configBoot; } catch { /* 壳层没起 handler：走默认值 */ }
+contextBridge.exposeInMainWorld("quaverConfig", {
+  boot: configBoot,
+  all: () => ipcRenderer.invoke("quaver:config", { op: "all" }),
+  set: (patch) => ipcRenderer.invoke("quaver:config", { op: "set", patch }),
+  reset: () => ipcRenderer.invoke("quaver:config", { op: "reset" }),
+  reveal: () => ipcRenderer.invoke("quaver:config", { op: "reveal" }),
+});
+
 // 音频引擎（mpv 后端）：invoke 走请求/应答（handle 返回值可序列化），事件为主进程主动推。
 // 渲染层 Transport 抽象（src/lib/transport.ts）据此实现 EngineTransport；
 // 浏览器 dev（无 preload）下 window.quaverAudio 不存在 → 自动落到 <audio> WebTransport。

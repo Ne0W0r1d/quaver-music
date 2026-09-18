@@ -17,7 +17,7 @@ await page.goto(`${BASE}/index.html#/`, { waitUntil: "networkidle2" });
 await sleep(1500);
 
 // 设置默认音质 = flac（会员档位）
-await page.evaluate(() => localStorage.setItem("quaver.quality.v1", "flac"));
+await page.evaluate(() => window.__cfg.set({ "Quality.DefaultQuality": "flac" }));
 
 async function playTier(tier, label) {
   const r = await page.evaluate(async (tier) => {
@@ -41,16 +41,16 @@ async function playTier(tier, label) {
   }
 }
 
-// 通过 quality 设定逐档播放（每次重载 localStorage 后由 playList 读取）
+// 通过 quality 设定逐档播放（每档写进配置内存快照，playList 立即按新档协商）
 for (const q of ["flac", "640ogg", "master", "320", "128", "auto"]) {
-  await page.evaluate((q) => localStorage.setItem("quaver.quality.v1", q), q);
+  await page.evaluate((q) => window.__cfg.set({ "Quality.DefaultQuality": q }), q);
   await playTier(q);
   await page.evaluate(() => window.__quaverPlayer.audio.pause());
   await sleep(300);
 }
 
 // 播放条音质徽章检查（高档位应显示徽章）
-await page.evaluate(() => localStorage.setItem("quaver.quality.v1", "flac"));
+await page.evaluate(() => window.__cfg.set({ "Quality.DefaultQuality": "flac" }));
 await playTier("flac-badge");
 await sleep(800);
 const badge = await page.$eval("#pb-sub", (el) => el.textContent);

@@ -3,7 +3,13 @@
 // 音频走 Transport 抽象（src/lib/transport.ts）：默认 mpv 原生引擎（Electron 壳层），
 // 可选浏览器 <audio> 兜底；曲目/队列/循环/歌词归本层，位置/时长/播放态真相在传输层。
 import { api, postJson, coverUrl, resolveStreamUrl, effectiveQuality, getSessionQuality, setSessionQuality, setLastStream, writeSongType, type StreamResult } from "./lib/api";
-import { getDecode, setDecode, getAudioDevice, setAudioDevice, setFade, FADE_PRESETS, type DecodeBackend, type FadePreset } from "./lib/prefs";
+import {
+  getDecode, setDecode, getAudioDevice, setAudioDevice, setFade, FADE_PRESETS,
+  getVolume as getVolumeConf, setVolume as setVolumeConf,
+  getMuted as getMutedConf, setMuted as setMutedConf,
+  getShowTrans, setShowTrans,
+  type DecodeBackend, type FadePreset,
+} from "./lib/prefs";
 import { WebTransport, EngineTransport, type Transport, type TransportEvent, type AudioDeviceInfo } from "./lib/transport";
 import { parseLrc, type LyricLine } from "./lyric";
 
@@ -24,10 +30,9 @@ export type ActiveBackend = "mpv" | "web";
 
 type Listener = () => void;
 
+// 红心收藏是「本地数据」不是设置：留在 localStorage（上游无收藏写接口，见 README 约定）。
+// 其余偏好（音量/静音/歌词翻译/后端/音质…）一律走 quaver.conf，见 lib/prefs.ts。
 const LS_KEY = "quaver.loved.v1";
-const VOL_KEY = "quaver.volume.v1";
-const MUTE_KEY = "quaver.muted.v1";
-const TRANS_KEY = "quaver.showTrans.v1";
 
 // 「我喜欢」(dirid=201) 预载：每页条数 + 总上限（防超大歌单一口气拉爆首屏），
 // 以及预载结果的新鲜期——期内视图直接吃缓存，过期才回源对账。
@@ -57,7 +62,7 @@ class Player {
   loading = false; // 正在取链/缓冲（UI 画加载指示）
   expanded = false; // 正在播放页是否展开
   queueOpen = false;
-  showTrans = localStorage.getItem(TRANS_KEY) !== "0"; // 歌词翻译显示开关（默认开）
+  showTrans = getShowTrans(); // 歌词翻译显示开关（quaver.conf [Style] ShowTranslation，默认开）
   /** 实际生效后端（"mpv"=原生引擎；"web"=浏览器 <audio>） */
   backend: ActiveBackend = "web";
   /** 后端不可用/回退原因（设置页提示；空 = 正常） */
@@ -76,10 +81,9 @@ class Player {
 
   constructor() {
     this.bindTransport(this.transport);
-    // 音量持久化：quaver.volume.v1 (0..1) + quaver.muted.v1 ("1")
-    const stored = parseFloat(localStorage.getItem(VOL_KEY) ?? "");
-    this._vol = isFinite(stored) ? Math.max(0, Math.min(1, stored)) : 0.8;
-    this._muted = localStorage.getItem(MUTE_KEY) === "1";
+    // 音量/静音来自 quaver.conf（[Playing] Volume / Muted），静音时保留原音量值
+    this._vol = getVolumeConf();
+    this._muted = getMutedConf();
     this.applyVolume();
     // 默认 MPV：启动即探测可用性并热切换传输（浏览器 dev / mpv 缺失时留在 <audio>）
     this.backendInit = this.initBackend();
@@ -262,21 +266,21 @@ class Player {
   setVolume(v: number, unmute = true) {
     this._vol = Math.max(0, Math.min(1, v));
     if (unmute && this._muted && this._vol > 0) this._muted = false;
-    localStorage.setItem(VOL_KEY, String(this._vol));
-    if (!this._muted) localStorage.removeItem(MUTE_KEY);
+    setVolumeConf(this._vol);           // 拖拽高频：内存即时、落盘合并
+    if (!this._muted) setMutedConf(false);
     this.applyVolume();
     this.notify();
   }
   toggleMute() {
     this._muted = !this._muted;
-    localStorage.setItem(MUTE_KEY, this._muted ? "1" : "0");
+    setMutedConf(this._muted);
     this.applyVolume();
     this.notify();
   }
 
   toggleTrans() {
     this.showTrans = !this.showTrans;
-    localStorage.setItem(TRANS_KEY, this.showTrans ? "1" : "0");
+    setShowTrans(this.showTrans);
     this.notify();
   }
 

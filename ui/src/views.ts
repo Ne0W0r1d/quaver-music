@@ -6,10 +6,14 @@ import { getMyMusicid, isFavSonglist, loadFavSonglists, onFavSonglistsChange, to
 import { pushHistory } from "./components/SearchBox";
 import { player } from "./player";
 import {
-  getTheme, setTheme, getDecor, setDecor, getUiFont, setUiFont, getLyricFont, setLyricFont,
-  getDecode, getFade, FONT_LABELS, getFallbackSort, setFallbackSort, getCloseAction, setCloseAction,
+  getTheme, setTheme, getDecor, setDecor,
+  getUiFontList, setUiFontList, setUiFontPreset,
+  getLyricFontList, setLyricFontList, setLyricFontPreset,
+  getDecode, getFade, FONT_LABELS, FONT_PRESETS, FONT_CUSTOM, fontKeyOf, normalizeFontList,
+  getFallbackSort, setFallbackSort, getCloseAction, setCloseAction,
   type FadePreset,
 } from "./lib/prefs";
+import { configInfo, revealConfig, resetConfig } from "./lib/config";
 
 const h = (tag: string, cls: string, html = "") => {
   const el = document.createElement(tag);
@@ -446,7 +450,8 @@ async function likedView(root: HTMLElement) {
 // —— 设置页（对齐设计稿：外观设置 / 播放设置 / 调试 三区；不触碰侧栏与播放条） ——
 async function settingsView(root: HTMLElement) {
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-  const fontOptions = Object.entries(FONT_LABELS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
+  const fontOptions = Object.entries(FONT_LABELS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")
+    + `<option value="${FONT_CUSTOM}">自定义</option>`;
   const decodeRow = (name: string, label: string, disabled = false) =>
     `<label><input type="radio" name="decode" value="${name}"${disabled ? " disabled" : ""}/>${label}${disabled ? ` <span class="muted soon">敬请期待</span>` : ""}</label>`;
 
@@ -478,10 +483,22 @@ async function settingsView(root: HTMLElement) {
       <p class="muted set-hint">缩放到托盘：窗口隐藏，播放与系统托盘图标继续，托盘菜单「退出」才结束程序。</p>
 
       <div class="set-sub">字体设置</div>
-      <label class="set-field"><span>界面字体</span>
-        <select id="font-ui">${fontOptions}</select></label>
-      <label class="set-field"><span>歌词字体</span>
-        <select id="font-lyric">${fontOptions}</select></label>
+      <div class="set-field"><span>界面字体</span>
+        <div class="font-row">
+          <select id="font-ui" aria-label="界面字体预设">${fontOptions}</select>
+          <input id="font-ui-list" type="text" spellcheck="false" autocomplete="off"
+            aria-label="界面字体 font-family 列表"
+            placeholder="留空，如 Source Han Sans, system-ui, sans-serif" />
+        </div>
+      </div>
+      <div class="set-field"><span>歌词字体</span>
+        <div class="font-row">
+          <select id="font-lyric" aria-label="歌词字体预设">${fontOptions}</select>
+          <input id="font-lyric-list" type="text" spellcheck="false" autocomplete="off"
+            aria-label="歌词字体 font-family 列表" placeholder="" />
+        </div>
+      </div>
+      <p class="muted set-hint">输入框里填的就是 CSS font-family 列表（逗号分隔、按优先级挑第一个装得上的），改完即时生效；留空表示不覆盖，走内置默认栈。</p>
     </section>
 
     <section class="set-sec">
@@ -521,6 +538,18 @@ async function settingsView(root: HTMLElement) {
       </div>
       <p class="muted set-hint">自动/降档时优先取到「臻品母带」，跳过「臻品全景声」（显式点选全景声不受影响）；「按标准排序」则回退链保持 rank 降序原样。</p>
       <p class="muted set-hint">档位即时生效（下一首起按新音质协商取链）。臻品母带/全景声等高档位仅限会员；本后端只流播明文档，不提供加密档（QMC）解密。</p>
+    </section>
+
+    <section class="set-sec">
+      <h2>配置文件</h2>
+      <p class="muted set-note">以下设置全部持久化在系统标准配置目录的 <code>quaver.conf</code>（INI）里，可以直接手改；登录凭证在同一目录，不进浏览器。</p>
+      <label class="set-field"><span>配置文件</span>
+        <input id="conf-path" readonly /></label>
+      <div class="set-debug">
+        <button class="ghost-btn" id="open-conf" type="button">在文件管理器中显示</button>
+        <button class="ghost-btn" id="reset-conf" type="button">恢复默认设置</button>
+      </div>
+      <p class="muted set-hint" id="conf-hint"></p>
     </section>
 
     <section class="set-sec">
@@ -573,11 +602,66 @@ async function settingsView(root: HTMLElement) {
   });
   syncFade();
 
-  // 字体：界面 / 歌词两族，写 CSS 变量即时生效
-  const fu = wrap.querySelector<HTMLSelectElement>("#font-ui")!;
-  const fl = wrap.querySelector<HTMLSelectElement>("#font-lyric")!;
-  fu.value = getUiFont(); fu.onchange = () => setUiFont(fu.value);
-  fl.value = getLyricFont(); fl.onchange = () => setLyricFont(fl.value);
+  // 字体：下拉给预设，右侧输入框可直接编辑 CSS font-family 列表（不必再去手改配置文件）。
+  // 两边互相同步：选预设 → 填进输入框；输入框改成非预设值 → 下拉自动切到「自定义」。输入即时生效。
+  const bindFont = (
+    sel: HTMLSelectElement,
+    input: HTMLInputElement,
+    applyList: (css: string) => void,
+    pickPreset: (key: string) => void,
+    current: string,
+  ) => {
+    input.value = current;
+    sel.value = fontKeyOf(current);
+    sel.onchange = () => {
+      if (sel.value === FONT_CUSTOM) return; // 「自定义」= 保持输入框现有内容，不动配置
+      const css = FONT_PRESETS[sel.value]?.css ?? "";
+      input.value = css;
+      pickPreset(sel.value);
+    };
+    input.oninput = () => { applyList(input.value); sel.value = fontKeyOf(input.value); };
+    // 失焦时把输入框回写成规范化结果，跟落进配置的值保持一致（多余空格、半截分号都在这里清掉）
+    input.onchange = () => {
+      const norm = normalizeFontList(input.value);
+      if (norm !== input.value) input.value = norm;
+      applyList(norm);
+      sel.value = fontKeyOf(norm);
+    };
+  };
+  bindFont(
+    wrap.querySelector<HTMLSelectElement>("#font-ui")!,
+    wrap.querySelector<HTMLInputElement>("#font-ui-list")!,
+    setUiFontList, setUiFontPreset, getUiFontList(),
+  );
+  bindFont(
+    wrap.querySelector<HTMLSelectElement>("#font-lyric")!,
+    wrap.querySelector<HTMLInputElement>("#font-lyric-list")!,
+    setLyricFontList, setLyricFontPreset, getLyricFontList(),
+  );
+
+  // 配置文件：展示磁盘路径 + 一键定位 / 重置（浏览器 dev 下没有文件，只提示真相在哪）
+  const conf = configInfo();
+  const confPath = wrap.querySelector<HTMLInputElement>("#conf-path")!;
+  const confHint = wrap.querySelector<HTMLElement>("#conf-hint")!;
+  const openBtn = wrap.querySelector<HTMLButtonElement>("#open-conf")!;
+  const resetBtn = wrap.querySelector<HTMLButtonElement>("#reset-conf")!;
+  if (conf.bridged) {
+    confPath.value = conf.path;
+    confHint.textContent = conf.writable
+      ? "手改后重启应用生效（改坏的值会自动回落默认，不影响启动）。"
+      : "⚠️ 配置目录不可写，本次改动只在本进程内生效。";
+  } else {
+    confPath.value = "（浏览器模式：设置在 localStorage）";
+    confHint.textContent = "当前跑在浏览器里，改动只存在本机浏览器存储；用 Electron 壳层启动才会落到 quaver.conf。";
+    openBtn.disabled = true;
+    resetBtn.disabled = true;
+  }
+  openBtn.onclick = () => { void revealConfig(); };
+  resetBtn.onclick = async () => {
+    if (!confirm("用模板重建 quaver.conf？主题 / 字体 / 播放 / 音质等设置会回到默认值，登录凭证不受影响。")) return;
+    await resetConfig();
+    location.reload(); // 重置后整页重来，省得逐项刷 UI 状态
+  };
 
   // —— 播放引擎：MPV（默认，原生）/ Blink（浏览器 <audio>）。热切换当前曲目换轨续播。
   const radios = wrap.querySelectorAll<HTMLInputElement>("#decode-radios input");
@@ -597,7 +681,7 @@ async function settingsView(root: HTMLElement) {
     });
     const src = MPV_SOURCE_LABEL[st.source] ?? "";
     engNote.textContent = player.backend === "mpv"
-      ? `- MPV 引擎运行中${src ? "（" + src + "）" : ""}`
+      ? `- MPV 运行中${src ? "（" + src + "）" : ""}`
       : st.available ? `- 默认 MPV（${src}），当前浏览器兜底` : "- " + (st.reason || "mpv 不可用，已回退浏览器音频");
   }
 
@@ -615,7 +699,7 @@ async function settingsView(root: HTMLElement) {
     const cur = r.devices.some((d) => d.id === r.current) ? r.current : "auto";
     devSel.value = cur;
     devSel.disabled = false;
-    devHint.textContent = "MPV 引擎直连输出设备（PipeWire/Pulse/ALSA…），切换即时生效，无需重启。";
+    devHint.textContent = "切换即时生效，无需重启。";
     devSel.onchange = () => { void player.selectAudioDevice(devSel.value); };
   }
 
@@ -723,7 +807,7 @@ async function loginView(root: HTMLElement) {
   root.innerHTML = `
     <div class="login-wrap">
       <h2>扫码登录</h2>
-      <p class="muted">用手机 QQ 音乐 App 或微信扫码。凭证由本机 sidecar 保存于 ~/.config/quaver/credential.json（0600），不进浏览器。</p>
+      <p class="muted">用手机 QQ 音乐 App 或微信扫码。凭证由本机 sidecar 保存于系统配置目录的 credential.json（0600，Linux 在 ~/.config/quaver-music），不进浏览器。</p>
       <div class="qr-box">
         <div id="qr" class="qr"><div class="muted">正在生成二维码…</div></div>
         <div id="lstate" class="muted"></div>

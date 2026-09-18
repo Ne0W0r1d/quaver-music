@@ -121,7 +121,7 @@ const MISSING_DIST_PAGE = `<!doctype html><meta charset="utf-8"><body style="fon
 export async function startQuaverServer({ dist, logFile, host = "127.0.0.1", port = 0 }) {
   const DIST = normalize(dist);
 
-  const server = createServer(async (req, res) => {
+  const handler = async (req, res) => {
     const url = new URL(req.url ?? "/", "http://local");
 
     // —— /api/*：中继 ——
@@ -198,11 +198,33 @@ export async function startQuaverServer({ dist, logFile, host = "127.0.0.1", por
     }
     res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
     res.end(await import("node:fs/promises").then((m) => m.readFile(file)));
-  });
+  };
 
-  await new Promise((resolve) => server.listen(port, host, resolve));
+  let server = createServer(handler);
+  try {
+    await listen(server, port, host);
+  } catch (e) {
+    // 首选端口被占（别的实例残留 / 端口冲突）→ 回落系统分配。
+    // 固定端口的意义是 origin 稳定，但**起不来比 origin 变严重得多**，所以这里绝不硬失败。
+    if (port === 0 || e?.code !== "EADDRINUSE") throw e;
+    console.warn(`[quaver] 端口 ${port} 被占用，回落随机端口（本次渲染层 origin 会变）`);
+    try { server.close(); } catch {}
+    server = createServer(handler);
+    await listen(server, 0, host);
+  }
   const actual = server.address().port;
   return { server, url: `http://${host}:${actual}/`, close: () => server.close() };
+}
+
+/** 监听指定端口；失败时 reject，调用方决定是否回落。 */
+function listen(server, port, host) {
+  return new Promise((resolve, reject) => {
+    const onErr = (e) => { server.off("listening", onOk); reject(e); };
+    const onOk = () => { server.off("error", onErr); resolve(); };
+    server.once("error", onErr);
+    server.once("listening", onOk);
+    server.listen(port, host);
+  });
 }
 
 // 允许独立跑（调试用）：node electron/native-server.mjs

@@ -1,4 +1,5 @@
-// Quaver — SPA 入口：先应用持久化偏好（主题/字体/装饰），再 boot 壳层；路由由 hash 驱动
+// Quaver — SPA 入口：应用持久化偏好（quaver.conf），boot 壳层；路由由 hash 驱动
+// 配置在 preload 阶段已同步取好（见 src/lib/config.ts 顶部说明），这里无需等待任何异步。
 import { applyTheme, applyFonts, applyDecor, syncCloseAction } from "./lib/prefs";
 import { player } from "./player";
 import { bootShell } from "./shell";

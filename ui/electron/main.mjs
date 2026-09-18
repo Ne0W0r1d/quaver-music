@@ -1,7 +1,7 @@
 // Quaver — Electron 主进程（ESM）
 // 起一个进程内 vite preview（dist/ + /api 中继插件），窗口加载 http://127.0.0.1:<port>
 // frame:false：无原生标题栏——窗口右上角平铺三个窗口按钮（min/max/close）+抓握点，经 preload IPC 接管。
-import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, nativeTheme, shell } from "electron";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -10,16 +10,53 @@ import { extname, join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 // 音频引擎（mpv 后端）：窗口 URL 确定后 init（需要 baseUrl 绝对化 /api/stream 中继地址）
 import { audioEngine } from "./audio/engine.mjs";
+// 配置文件（quaver.conf）与跨平台目录规则：路径单一真相，渲染层与 sidecar 都对齐这一份
+import { configDir, configFile, ensureConfigDir, logFile, readValues, resetConfig, writeValues } from "./config.mjs";
 // 注意：vite 不能在顶层 import——实测其在 Electron 主进程有副作用，会让 app.whenReady() 永不兑现。
 // 只在 createWindow 里动态 import()。
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_ROOT = resolve(__dirname, "..");
 const DIST = join(UI_ROOT, "dist");
-// 打包态 asar 不可写，日志落 userData；开发态维持 ui/electron-dev.log（relay.ts 也读这个）
-const LOG = join(app.isPackaged ? app.getPath("userData") : UI_ROOT, "electron-dev.log");
+
+// ——— 配置根目录 ———
+// Linux ~/.config/quaver-music ｜ Windows %AppData%/Quaver Music ｜ macOS Application Support。
+// 必须在任何 app.getPath("userData") 之前落定：AppImage 每次挂载点都不同，不把 userData 钉死，
+// Chromium 的 localStorage/IndexedDB/Cache 目录就会跟着漂（设置「保不住」的另一半原因）。
+const CONFIG_DIR = configDir();
+let configDirOk = true;
+try {
+  ensureConfigDir();
+  app.setPath("userData", CONFIG_DIR);
+} catch (e) {
+  configDirOk = false;
+  console.error("[quaver] 配置目录不可用，回退 Electron 默认 userData:", String(e));
+}
+
+// 打包态 asar 不可写，日志落配置目录；配置目录不可用则退回 Electron 默认 userData。
+// 开发态维持 ui/electron-dev.log（relay.ts 也读这个）。
+const LOG = app.isPackaged
+  ? (configDirOk ? logFile() : join(app.getPath("userData"), "electron-dev.log"))
+  : join(UI_ROOT, "electron-dev.log");
 import { appendFileSync } from "node:fs";
 const log = (...a) => { const s = a.map((x) => (typeof x === "string" ? x : String(x))).join(" "); try { appendFileSync(LOG, s + "\n"); } catch {} console.log(s); };
+
+// 启动即按磁盘配置定初值：窗口装饰只在构造时能给定 frame，晚一步就得拆窗重建（用户会看到闪一下）。
+let bootConf = {};
+try {
+  const r = readValues();
+  bootConf = r.values;
+  for (const w of r.warnings) log("[quaver] config:", w);
+} catch (e) {
+  log("[quaver] 配置读取失败，全部走默认值:", String(e));
+}
+const bootTheme = bootConf["Style.Style"] ?? "dark";
+// 窗口底色：按 quaver.conf 的主题预判，避免加载首帧白闪（dark/follow-system 解析到深色就用深底）
+const bootDark = bootTheme === "dark" || (bootTheme !== "light" && nativeTheme.shouldUseDarkColors);
+
+// 打包态页面固定端口：origin 稳定，Chromium 侧的 localStorage/IndexedDB/Cache 才能跨启动延续。
+// 端口被占时 native-server 自动回落系统分配（设置本来就在 conf 里，不受影响）。
+const STABLE_PORT = 4174;
 
 // 兜底护栏：主进程任何未捕获异常/未处理 rejection 都会让 Electron 弹
 // 「A JavaScript error occurred in the main process」并可能带走整个应用 —— 一次后台网络
@@ -30,15 +67,15 @@ process.on("unhandledRejection", (r) => log("[quaver] unhandled rejection:", Str
 let win = null;
 let cachedUrl = null; // preview 服务器只起一次；CSD/SSD 重建窗口时复用
 let sidecar = null;   // 打包态自拉起的 Python sidecar 子进程
-// 窗口装饰模式：csd=自绘（frame:false，右上角按钮簇）；ssd=系统标题栏。渲染层 setDecor 偏好后重建窗口。
-let decorMode = "csd";
+// 窗口装饰模式：csd=自绘（frame:false，右上角按钮簇）；ssd=系统标题栏。初值取 quaver.conf 的 [Window] Decor。
+let decorMode = bootConf["Window.Decor"] === "ssd" ? "ssd" : "csd";
 let rebuilding = false;
 let tray = null; // Linux 走 D-Bus StatusNotifierItem（KDE/GNOME 托盘）
 
-// 关闭按钮行为（渲染层 quaver:close-action 同步；默认缩放到托盘）：
+// 关闭按钮行为（quaver:close-action 同步；初值取 quaver.conf 的 [Window] CloseAction）：
 // tray = 拦截 window close 改 hide（CSD 按钮簇✕、SSD 标题栏✕、Alt+F4 全部生效，托盘菜单可恢复）；
 // quit = 走默认关闭流程（window-all-closed → app.quit）。
-let closeAction = "tray";
+let closeAction = bootConf["Window.CloseAction"] === "quit" ? "quit" : "tray";
 let quitting = false;
 app.on("before-quit", () => (quitting = true));
 
@@ -183,7 +220,9 @@ function spawnSidecar() {
   process.env.QUAVER_API = `http://127.0.0.1:${port}`; // native-server.mjs 的中继目标
   log("[quaver] spawning sidecar:", bin, "port", port);
   const child = spawn(bin, [], {
-    env: { ...process.env, QUAVER_PORT: String(port) },
+    // QUAVER_CONFIG_DIR 显式下发：让 sidecar 的凭证/设备指纹与 Electron 落在同一目录，
+    // 两边各有一套平台规则做兜底（dev 态手工跑 sidecar 时也能落对地方）。
+    env: { ...process.env, QUAVER_PORT: String(port), QUAVER_CONFIG_DIR: CONFIG_DIR },
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout.on("data", (d) => log("[sidecar]", String(d).trimEnd()));
@@ -240,8 +279,8 @@ async function createWindow() {
       sidecar = spawnSidecar();
       if (sidecar) await waitSidecar(sidecar.quaverPort);
       const { startQuaverServer } = await import("./native-server.mjs");
-      const s = await startQuaverServer({ dist: DIST, logFile: LOG });
-      log("[quaver] native server started");
+      const s = await startQuaverServer({ dist: DIST, logFile: LOG, port: STABLE_PORT });
+      log("[quaver] native server started:", s.url);
       url = s.url;
     } else {
       // 开发态：vite preview（产物 + /api 中继 relay.ts 插件）同进程；动态 import 规避顶层导入副作用
@@ -272,7 +311,7 @@ async function createWindow() {
     minWidth: 760,   // 布局已适配窄窗（搜索框独立顶带 + 播放条流内收缩），半屏吸附不再挤压重叠
     minHeight: 520,   // 播放条为 .frame 流内固定行：任何高度下都占位可见
     frame: decorMode === "ssd", // CSD=无原生标题栏（右上角按钮簇）；SSD=系统标题栏
-    backgroundColor: "#f7f7f8",
+    backgroundColor: bootDark ? "#131417" : "#f7f7f8", // 同 style.css 的 --bg 明暗两值
     title: "Quaver",
     icon: buildRes("icon.png"), // 深色版应用图标（任务栏/窗口管理器等），与 AppImage desktop 图标一致
     webPreferences: {
@@ -300,8 +339,53 @@ async function createWindow() {
   win.on("closed", () => (win = null));
 }
 
+// ——— quaver.conf 读写桥 ———
+// 渲染层启动拉一次全量（all），之后每次改一项就整键写回（set）。路径解析、值域校验、
+// 原子落盘、权限都在主进程这一侧，渲染层只认 "Section.Key" → 字符串。
+//
+// 为什么有一个 sendSync 版本：渲染层模块（player 实例化、prefs 读值）在 ESM import 阶段就
+// 跑完了，任何 await 都排在它们之后 —— 异步取配置会让启动期全部落在默认值上。
+// 同步读一个小文件（<10ms，每个窗口一次）换时序确定性，值。
+ipcMain.on("quaver:config-sync", (e) => {
+  try {
+    const { values, warnings } = readValues();
+    for (const w of warnings) log("[quaver] config:", w);
+    e.returnValue = { ok: true, dir: CONFIG_DIR, path: configFile(), values, writable: configDirOk };
+  } catch (err) {
+    log("[quaver] config-sync failed:", String(err));
+    e.returnValue = { ok: false, error: String(err) };
+  }
+});
+
+ipcMain.handle("quaver:config", (_e, msg) => {
+  const op = msg?.op;
+  try {
+    if (op === "all") {
+      const { values, warnings } = readValues();
+      for (const w of warnings) log("[quaver] config:", w);
+      return { ok: true, dir: CONFIG_DIR, path: configFile(), values, writable: configDirOk };
+    }
+    if (op === "set") {
+      const written = writeValues(msg?.patch ?? {});
+      return { ok: true, written };
+    }
+    if (op === "reset") return { ok: true, values: resetConfig() };
+    if (op === "reveal") {
+      const p = configFile();
+      if (existsSync(p)) shell.showItemInFolder(p); // 文件管理器里高亮选中
+      else void shell.openPath(CONFIG_DIR);
+      return { ok: true };
+    }
+    return { ok: false, error: `unknown op: ${op}` };
+  } catch (e) {
+    log("[quaver] config op failed:", String(op), String(e));
+    return { ok: false, error: String(e) };
+  }
+});
+
 ipcMain.on("quaver:close-action", (_e, action) => {
   closeAction = action === "quit" ? "quit" : "tray";
+  writeValues({ "Window.CloseAction": closeAction }); // 幂等兜底：渲染层已写过，值相同不产生抖动
   log("[quaver] close-action ->", closeAction);
 });
 
@@ -316,6 +400,7 @@ ipcMain.on("quaver:win", (_e, action) => {
 // rebuilding 标志防止 window-all-closed 在拆窗瞬间退出应用。
 ipcMain.on("quaver:decor", (_e, mode) => {
   const next = mode === "ssd" ? "ssd" : "csd";
+  writeValues({ "Window.Decor": next }); // 幂等兜底：渲染层已写过，这里保证主进程侧落盘
   if (next === decorMode) return;
   const bounds = win?.getBounds();
   const maximized = win?.isMaximized();
