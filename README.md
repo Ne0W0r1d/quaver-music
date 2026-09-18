@@ -72,6 +72,22 @@ z：修补版本号
 macOS `~/Library/Application Support/Quaver Music`）—— 换版本、重装都不丢。`quaver.conf` 是 INI，可直接手改
 （程序只改对应键那一行，注释保留）。细节见 [ui/README.md](ui/README.md)。
 
+# 构建与发布
+
+CI（`.github/workflows/build.yml`）产出 x86_64 / aarch64 双架构 AppImage，版本号分三态：
+
+| 触发 | 版本号 | 发布 |
+| --- | --- | --- |
+| 打 `v*` tag | tag 去掉 `v` | 正式 Release |
+| 每夜定时（每天 18:00 UTC）/ 手动勾 `nightly` | `<package.json 版本>-<短 commit id>-nightly` | 滚动 Release `nightly`（覆盖上一次） |
+| push main / PR | `package.json` 里的值 | 不发布，只出 artifact |
+
+每夜版用滚动 tag `nightly`：老的那份（release + tag）会先删再建，仓库里始终只有一份「最新」。
+产物名与「关于」页都带 commit id，下载下来就知道对应哪个提交。
+
+版本号不能写成裸的 `<commit id>-nightly`：electron-builder 会对 `version` 做 semver 校验，
+非 semver 直接构建失败，所以 commit id 只能放在 prerelease 段里。
+
 # 协议
 
 该项目使用 AGPLv3 及其未来版本协议协议，其使用的 API 上游使用 GPLv3 及其未来版本协议

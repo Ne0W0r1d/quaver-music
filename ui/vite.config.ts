@@ -9,9 +9,14 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { apiRelay } from "./src/relay.ts";
 
-// 关于页版本号：优先取最近 git tag（如 v0.1.1），无 tag 时回退 package.json version
+// 关于页版本号：CI 显式指定 > 最近 git tag（如 v0.1.1）> package.json version。
+// 为什么要有 CI 这一路：CI 是浅克隆，`git describe` 拿不到 tag，而 electron-builder 的
+// 版本号是 CI 另外传的（tag 发布 / 每夜版带 commit id）—— 不给注入口的话，
+// 「关于」页会一直显示 package.json 里的 0.0.1，和产物文件名对不上。
 function appVersion(): string {
   const root = fileURLToPath(new URL(".", import.meta.url));
+  const explicit = process.env.QUAVER_VERSION?.trim();
+  if (explicit) return explicit;
   try {
     return execSync("git describe --tags --abbrev=0", { cwd: root, encoding: "utf8" }).trim();
   } catch {

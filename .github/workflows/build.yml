@@ -3,7 +3,16 @@
 # 前端：ui (Electron + Vite) → AppImage（内含对应架构的 sidecar 与随包音频运行时 mpv）
 # 架构：x86_64 + ARM64 双矩阵。PyInstaller 不能交叉编译，ARM 必须跑在
 #       GitHub 原生 ARM runner（ubuntu-24.04-arm）上，不用 QEMU。
-# 触发：push 到 main / PR 出 artifact；打 v* tag 额外发布 GitHub Release。
+# 触发：
+#   - push 到 main / PR：只出 artifact（版本号 = package.json 里的 0.0.1）
+#   - 打 v* tag：额外发布正式 GitHub Release（版本号 = tag 去掉 v）
+#   - 每夜定时 / 手动勾 nightly：版本号 = <package.json 版本>-<短 commit id>-nightly，
+#     发布到滚动 Release「nightly」（覆盖昨天的）
+#
+# 版本号为什么不是纯 `commit id + nightly`：electron-builder 会跑 normalizePackageData，
+# 非 semver 直接 `throw new Error('Invalid version: ...')`，所以 commit id 只能待在
+# prerelease 段里。同理不能用 `0.0.1-nightly+<sha>` —— semver.clean() 会把 build metadata
+# （`+` 后面）抹掉，版本最后只剩 `0.0.1-nightly`，commit id 白写。
 
 name: Build Linux
 
@@ -12,7 +21,15 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  schedule:
+    # 每天 18:00 UTC（北京时间次日 02:00）
+    - cron: "0 18 * * *"
   workflow_dispatch:
+    inputs:
+      nightly:
+        description: 按每夜版构建（版本号带 commit id，并发布/覆盖滚动 Release「nightly」）
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -165,19 +182,44 @@ jobs:
         working-directory: ui
         run: npm ci
 
+      # 版本号三态：tag 用 tag；每夜版用 <pkg version>-<短 sha>-nightly；其余留空走 package.json。
+      # 必须在 vite build 之前解析：vite.config.ts 会把它注入 __APP_VERSION__（关于页），
+      # 否则浅克隆下 git describe 拿不到 tag，关于页永远显示 package.json 里的 0.0.1。
+      - name: Resolve version
+        id: version
+        working-directory: ui
+        env:
+          NIGHTLY: ${{ github.event_name == 'schedule' || inputs.nightly == true }}
+        run: |
+          set -euo pipefail
+          if [[ "$NIGHTLY" == "true" ]]; then
+            base=$(node -p "require('./package.json').version")
+            sha="${GITHUB_SHA:0:7}"
+            echo "version=${base}-${sha}-nightly" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=" >> "$GITHUB_OUTPUT"
+          fi
+          echo "resolved: $(tail -1 "$GITHUB_OUTPUT")"
+
       - name: Build dist (tsc + vite)
         working-directory: ui
+        env:
+          QUAVER_VERSION: ${{ steps.version.outputs.version }}
         run: npm run build
 
       - name: electron-builder AppImage
         working-directory: ui
+        env:
+          QUAVER_VERSION: ${{ steps.version.outputs.version }}
         # 注意：不给这一步设 GH_TOKEN——有 token 时 builder 会自动推导 GitHub publish
         # 配置，repository 缺失时 updateInfoBuilder 直接崩（reading 'channel'）。
         # --publish never 下它本来也不需要。
         run: |
           ARGS="--linux AppImage --${{ matrix.electron_arch }} --publish never"
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            ARGS="$ARGS --config.extraMetadata.version=${GITHUB_REF#refs/tags/v}"
+          if [[ -n "$QUAVER_VERSION" ]]; then
+            ARGS="$ARGS --config.extraMetadata.version=$QUAVER_VERSION"
           fi
           npx electron-builder $ARGS
 
@@ -222,4 +264,47 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             -R "$GITHUB_REPOSITORY" \
             --generate-notes \
+            out/Quaver-*.AppImage
+
+  # ─────────────────────────── 每夜版 Release ───────────────────────────
+  # 滚动发布：tag/release 名恒为 nightly，每次构建覆盖上一次（含旧 tag 清理），
+  # 产物名里带短 commit id，所以下载下来就知道是哪个 commit 构建的。
+  nightly:
+    if: github.event_name == 'schedule' || inputs.nightly == true
+    needs: frontend
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "quaver-appimage-*"
+          merge-multiple: true
+          path: out
+
+      - name: Publish rolling nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ls -la out/
+          sha="${GITHUB_SHA:0:7}"
+          notes=$(mktemp)
+          {
+            echo "每夜版自动构建于 $(date -u '+%Y-%m-%d %H:%M UTC')，对应 commit \`$GITHUB_SHA\`。"
+            echo
+            echo "AppImage 文件名里的 \`$sha\` 即 commit id。"
+            echo
+            echo "**非稳定版本**，仅用于验证最新改动。"
+          } > "$notes"
+          # 昨天那份（release + tag）先删掉；首次跑没有，允许失败
+          gh release delete nightly -R "$GITHUB_REPOSITORY" --yes --cleanup-tag \
+            || echo "no previous nightly release, publishing the first one"
+          # -R 显式指定仓库：此 job 无 checkout，gh 靠 git 推断仓库会 fatal
+          gh release create nightly \
+            -R "$GITHUB_REPOSITORY" \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Nightly $sha ($(date -u +%Y-%m-%d))" \
+            --notes-file "$notes" \
             out/Quaver-*.AppImage
