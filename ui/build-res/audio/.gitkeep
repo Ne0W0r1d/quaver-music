@@ -1,0 +1,4 @@
+# 占位：让 build-res/audio/ 目录存在于版本库中（内容被 .gitignore 忽略）。
+# extraResources 的 from 路径不存在时 electron-builder 会直接失败；本地/CI 未暂存
+# 随包音频运行时的时候，这里只剩本占位文件 —— 构建照常通过，运行期回落系统 mpv。
+# 暂存：ui/scripts/stage-mpv.sh（CI 打包前自动执行）

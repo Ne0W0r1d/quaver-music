@@ -34,7 +34,7 @@ function snapshot(seeked = false) {
     v: 1,
     t: "state",
     status,
-    posUs: Math.floor((player.audio.currentTime || 0) * 1e6),
+    posUs: Math.floor((player.time || 0) * 1e6),
     volume: player.muted ? 0 : player.volume,
     loop: player.mode === "one" ? "Track" : player.mode === "all" ? "Playlist" : "None",
     shuffle: false, // Quaver 无随机播放：显式上报 false，总线 Shuffle 反映真实能力
@@ -101,12 +101,12 @@ export function startMprisBridge(): void {
     }
   };
 
-  // Seeked 信号：timeupdate 相邻两次间隔 >2s 视为位置突跳（拖动进度条/点击跳点）。
-  // 缓冲卡顿不算：stall 时 currentTime 冻结，恢复后从原处继续，无跳变。
-  let lastTime = player.audio.currentTime || 0;
+  // Seeked 信号：time 相邻两次间隔 >2s 视为位置突跳（拖动进度条/点击跳点）。
+  // 缓冲卡顿不算：stall 时位置冻结，恢复后从原处继续，无跳变。
+  let lastTime = player.time || 0;
   player.on(() => {
     const fp = fingerprint();
-    const t = player.audio.currentTime || 0;
+    const t = player.time || 0;
     const jumped = Math.abs(t - lastTime) > 2;
     lastTime = t;
     if (fp !== lastFp || jumped) {
@@ -121,17 +121,17 @@ export function startMprisBridge(): void {
   bridge.onCommand((msg) => {
     switch (msg.cmd) {
       case "play":
-        if (player.audio.paused) player.toggle(); // 复用错误重试/起播语义
+        if (player.paused) player.resume(); // 复用错误重试/起播语义
         break;
       case "pause":
-        if (!player.audio.paused) player.toggle();
+        if (!player.paused) player.pause();
         break;
       case "playpause":
         player.toggle();
         break;
       case "stop":
-        player.audio.pause();
-        try { player.audio.currentTime = 0; } catch { /* 无已加载媒体时置 0 抛 InvalidStateError，忽略 */ }
+        player.pause();
+        player.seek(0);
         player.notifyPublic();
         break;
       case "next":
@@ -155,7 +155,7 @@ export function startMprisBridge(): void {
         break; // 无随机播放：忽略（daemon 端已上报 shuffle=false）
       case "seek": {
         const delta = Number(msg.deltaUs) / 1e6;
-        if (isFinite(delta)) player.seek(player.audio.currentTime + delta);
+        if (isFinite(delta)) player.seek(player.time + delta);
         break;
       }
       case "seekTo": {

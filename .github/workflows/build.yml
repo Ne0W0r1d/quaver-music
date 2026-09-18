@@ -1,6 +1,6 @@
 # Quaver — Linux 前后端打包 CI
 # 后端：vendor/Typhoeus (quaver_server FastAPI sidecar) → PyInstaller onefile 二进制
-# 前端：ui (Electron + Vite) → AppImage（内含对应架构的 sidecar）
+# 前端：ui (Electron + Vite) → AppImage（内含对应架构的 sidecar 与随包音频运行时 mpv）
 # 架构：x86_64 + ARM64 双矩阵。PyInstaller 不能交叉编译，ARM 必须跑在
 #       GitHub 原生 ARM runner（ubuntu-24.04-arm）上，不用 QEMU。
 # 触发：push 到 main / PR 出 artifact；打 v* tag 额外发布 GitHub Release。
@@ -141,6 +141,19 @@ jobs:
           npm install
           npm run build
 
+      # 随包音频运行时（mpv）：上游不发 Linux 二进制，脚本钉 pkgforge 的 AppImage（含版本 + sha256），
+      # 在构建期 --appimage-extract 展开成目录再进 extraResources。运行期由 engine 用包内自带
+      # loader + lib/lib.path 直启载荷 —— 不套第二层 FUSE，也不跑 sharun 的钩子
+      # （自更新下载 / yt-dlp 弹窗），细节见 ui/electron/audio/bins.mjs 头部注释。
+      - name: Stage bundled mpv runtime
+        working-directory: ui
+        run: ./scripts/stage-mpv.sh "${{ matrix.arch_label }}"
+
+      # 验的就是生产解析路径本身（loader + lib.path + 真跑一次 --version）
+      - name: Verify staged mpv runtime
+        working-directory: ui
+        run: node electron/audio/bins.mjs --check build-res/audio
+
       # extraResources 里约定文件名是 quaver-server
       - name: Stage sidecar
         working-directory: dist-bin
@@ -167,6 +180,17 @@ jobs:
             ARGS="$ARGS --config.extraMetadata.version=${GITHUB_REF#refs/tags/v}"
           fi
           npx electron-builder $ARGS
+
+      # 断言打进包里的运行时真能跑：跨架构/缺库不会报错、只会跑不起来（exec 126），
+      # 且 AppImage 是只读挂载 —— 运行时没法 chmod 补救，必须在 CI 就验过。
+      - name: Verify bundled mpv inside AppImage
+        working-directory: ui
+        run: |
+          set -euo pipefail
+          ./release/Quaver-*.AppImage --appimage-extract >/dev/null
+          root=squashfs-root
+          [ -d "$root/resources/audio/mpv" ] || root=AppDir   # 解包目录名随 runtime 而异
+          node electron/audio/bins.mjs --check "$root/resources/audio"
 
       - uses: actions/upload-artifact@v7
         with:

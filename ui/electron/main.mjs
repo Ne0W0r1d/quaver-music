@@ -8,6 +8,8 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { extname, join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+// 音频引擎（mpv 后端）：窗口 URL 确定后 init（需要 baseUrl 绝对化 /api/stream 中继地址）
+import { audioEngine } from "./audio/engine.mjs";
 // 注意：vite 不能在顶层 import——实测其在 Electron 主进程有副作用，会让 app.whenReady() 永不兑现。
 // 只在 createWindow 里动态 import()。
 
@@ -258,6 +260,10 @@ async function createWindow() {
   cachedUrl = url;
   }
   if (process.env.QUAVER_URL) url = process.env.QUAVER_URL; // 集成测试：指向 vite dev server（含 __quaverPlayer 钩子）
+  // 引擎拿真实加载地址的 origin 做流中继（幂等：重建窗口只刷新引用与 baseUrl）
+  try {
+    audioEngine.init({ baseUrl: new URL(url).origin, getWin: () => win, log });
+  } catch (e) { log("[quaver] audio engine init failed:", String(e)); }
   log("[quaver] loading", url);
 
   win = new BrowserWindow({
@@ -315,6 +321,9 @@ ipcMain.on("quaver:decor", (_e, mode) => {
   const maximized = win?.isMaximized();
   decorMode = next;
   log("[quaver] decor ->", next);
+  // 拆窗前暂停音频：渲染层会被销毁，而 mpv 活在渲染层之外 —— 不暂停就成了没有 UI 的孤儿播放，
+  // 重建后的新页面还是空队列，用户既看不见也停不掉。
+  void audioEngine.pauseForRebuild();
   rebuilding = true;
   if (!defaultMenu) defaultMenu = Menu.getApplicationMenu(); // 兜底：切走前若默认菜单已被摘，无从还原
   win?.destroy();
@@ -360,4 +369,5 @@ app.on("window-all-closed", () => { if (!rebuilding) app.quit(); });
 app.on("will-quit", () => {
   try { sidecar?.kill(); } catch {}
   try { mprisDaemon?.kill(); } catch {}
+  try { audioEngine.shutdown(); } catch {}
 });

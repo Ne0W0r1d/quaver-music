@@ -50,6 +50,11 @@
       {
         "from": "build-res/tray.png",
         "to": "build-res/tray.png"
+      },
+      {
+        "from": "build-res/audio",
+        "to": "audio",
+        "filter": ["**/*", "!**/*.AppImage", "!**/.work/**"]
       }
     ],
     "linux": {

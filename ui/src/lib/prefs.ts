@@ -66,9 +66,44 @@ export function setDecor(m: DecorMode) {
   if (bridge?.setDecor) bridge.setDecor(m); // Electron：主进程改 frame 并重建窗口
 }
 
-// —— 解码后端（当前仅持久化；接入多后端管线后由播放器读取生效） ——
-export function getDecode() { return localStorage.getItem(K_DECODE) || "FFmpeg"; }
-export function setDecode(v: string) { localStorage.setItem(K_DECODE, v); }
+// —— 解码后端：MPV=原生引擎（默认，Electron 壳层经主进程 mpv 播放）；
+//    Blink=浏览器 <audio>（兜底/对照用）。旧值 FFmpeg 归一为 MPV（该管线已下线）。
+//    偏好只决定启动选择；引擎不可用时播放器自动落 Blink 并在设置页提示。 ——
+export type DecodeBackend = "MPV" | "Blink";
+export function getDecode(): DecodeBackend {
+  return localStorage.getItem(K_DECODE) === "Blink" ? "Blink" : "MPV";
+}
+export function setDecode(v: DecodeBackend) {
+  localStorage.setItem(K_DECODE, v);
+}
+
+// —— 音频输出设备（MPV 后端）：mpv audio-device 名（"auto" = 系统默认）。
+//    渲染层持久化，引擎拉起/重拉后据此应用；Blink 后端不消费此偏好。 ——
+const K_ADEV = "quaver.audio.device.v1";
+export function getAudioDevice(): string {
+  return localStorage.getItem(K_ADEV) || "auto";
+}
+export function setAudioDevice(id: string) {
+  localStorage.setItem(K_ADEV, id || "auto");
+}
+
+// —— 淡入淡出（仅 MPV 后端）：起播淡入 / 暂停与切歌淡出。时长交给引擎做振幅包络。 ——
+export type FadePreset = "off" | "short" | "normal" | "long";
+export const FADE_PRESETS: Record<FadePreset, { inMs: number; outMs: number }> = {
+  off: { inMs: 0, outMs: 0 },
+  short: { inMs: 150, outMs: 120 },
+  normal: { inMs: 400, outMs: 250 },
+  long: { inMs: 800, outMs: 500 },
+};
+const K_FADE = "quaver.fade.v1";
+export function getFade(): FadePreset {
+  const v = localStorage.getItem(K_FADE);
+  return v === "off" || v === "short" || v === "long" ? v : "normal";
+}
+export function setFade(v: FadePreset) {
+  localStorage.setItem(K_FADE, v);
+}
+export function getFadeMs() { return FADE_PRESETS[getFade()]; }
 
 // —— 音质 Fallback 排序：no-atmos=自动/回退时不优先落到臻品全景声（默认，母带优先），
 //    rank=按标准 rank 降序回退（全景声在其 rank 位置自然参与） ——

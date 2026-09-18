@@ -11,6 +11,11 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# 随包音频运行时（CI/本地用 scripts/stage-mpv.sh 解 mpv AppImage 到这里，~90MB，不入库）。
+# 目录本身要留在树里：extraResources 的 from 路径不存在会让 electron-builder 直接报错。
+build-res/audio/*
+!build-res/audio/.gitkeep
+
 # environment variables
 .env
 .env.production

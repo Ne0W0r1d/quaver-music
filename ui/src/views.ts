@@ -7,7 +7,8 @@ import { pushHistory } from "./components/SearchBox";
 import { player } from "./player";
 import {
   getTheme, setTheme, getDecor, setDecor, getUiFont, setUiFont, getLyricFont, setLyricFont,
-  getDecode, setDecode, FONT_LABELS, getFallbackSort, setFallbackSort, getCloseAction, setCloseAction,
+  getDecode, getFade, FONT_LABELS, getFallbackSort, setFallbackSort, getCloseAction, setCloseAction,
+  type FadePreset,
 } from "./lib/prefs";
 
 const h = (tag: string, cls: string, html = "") => {
@@ -490,14 +491,24 @@ async function settingsView(root: HTMLElement) {
       <div class="set-sub">后端模式</div>
       <p class="muted set-note">如果播放音频出现问题可在这设置</p>
       <div id="backend-device"${isMac ? " hidden" : ""}>
-        <label class="set-field"><span>音频后端/设备</span>
+        <label class="set-field"><span>音频输出设备</span>
           <select id="audio-backend" disabled><option>系统默认</option></select></label>
-        <p class="muted set-hint">Windows 默认 WASAPI，Linux 默认 PipeWire，macOS 走 CoreAudio 不显示该设置。当前播放管线为 Chromium Web Audio，接入原生后端后这里会列出真实设备。</p>
+        <p class="muted set-hint" id="audio-device-hint">MPV 引擎下可直选输出设备（PipeWire/Pulse/ALSA…），切换即时生效；浏览器后端跟随系统。</p>
       </div>
-      <div class="set-sub set-sub2">解码后端 <span class="muted set-subnote">- 默认 FFmpeg，可选 MPV/Blink</span></div>
+      <div class="set-sub set-sub2">播放引擎 <span class="muted set-subnote" id="engine-note">- 默认 MPV，可选浏览器</span></div>
       <div class="opt-radios" id="decode-radios">
-        ${decodeRow("FFmpeg", "FFmpeg")}${decodeRow("MPV", "MPV", true)}${decodeRow("Blink", "Blink", true)}
+        ${decodeRow("MPV", "MPV（原生引擎）")}${decodeRow("Blink", "浏览器 &lt;audio&gt;")}
       </div>
+      <p class="muted set-hint" id="engine-hint">MPV：主进程原生播放，带内存滑动窗口缓存与设备直选，MPRIS/媒体键体验最完整；浏览器：渲染层 &lt;audio&gt; 兜底。切换即时生效，当前曲目换轨续播。</p>
+
+      <div class="set-sub set-sub2">淡入淡出 <span class="muted set-subnote">- 仅 MPV 引擎生效</span></div>
+      <div class="opt-cards" id="fade-cards">
+        <button class="opt-card" data-opt="off" type="button">关闭</button>
+        <button class="opt-card" data-opt="short" type="button">短（0.15s）</button>
+        <button class="opt-card" data-opt="normal" type="button">标准（0.4s）</button>
+        <button class="opt-card" data-opt="long" type="button">长（0.8s）</button>
+      </div>
+      <p class="muted set-hint">起播从静音升到当前音量；暂停 / 切歌 / 停止时先降下来再停（切歌时淡出与下一首的淡入自然衔接）。浏览器 &lt;audio&gt; 后端不生效。</p>
 
       <div class="set-sub">默认音质 <span class="muted set-subnote" id="q-member-note"></span></div>
       <div class="opt-cards" id="quality-grid">
@@ -554,16 +565,71 @@ async function settingsView(root: HTMLElement) {
   fbBox.querySelectorAll<HTMLElement>("[data-opt]").forEach((b) => { b.onclick = () => { setFallbackSort(b.dataset.opt as any); syncFb(); }; });
   syncFb();
 
+  // 淡入淡出预设：持久化 + 立即下发时长（引擎侧做振幅包络；Blink 后端无此项）
+  const fadeBox = wrap.querySelector<HTMLElement>("#fade-cards")!;
+  const syncFade = () => syncSel(fadeBox, "opt", getFade());
+  fadeBox.querySelectorAll<HTMLElement>("[data-opt]").forEach((b) => {
+    b.onclick = () => { void player.setFadePreset(b.dataset.opt as FadePreset); syncFade(); };
+  });
+  syncFade();
+
   // 字体：界面 / 歌词两族，写 CSS 变量即时生效
   const fu = wrap.querySelector<HTMLSelectElement>("#font-ui")!;
   const fl = wrap.querySelector<HTMLSelectElement>("#font-lyric")!;
   fu.value = getUiFont(); fu.onchange = () => setUiFont(fu.value);
   fl.value = getLyricFont(); fl.onchange = () => setLyricFont(fl.value);
 
-  // 解码后端：当前管线只有 FFmpeg（Web Audio 解码）可用；选择持久化，多后端接入后生效
+  // —— 播放引擎：MPV（默认，原生）/ Blink（浏览器 <audio>）。热切换当前曲目换轨续播。
   const radios = wrap.querySelectorAll<HTMLInputElement>("#decode-radios input");
-  const decode = getDecode();
-  radios.forEach((r) => { r.checked = r.value === decode; r.onchange = () => { if (r.checked) setDecode(r.value); }; });
+  const devSel = wrap.querySelector<HTMLSelectElement>("#audio-backend")!;
+  const devHint = wrap.querySelector<HTMLElement>("#audio-device-hint")!;
+  const engNote = wrap.querySelector<HTMLElement>("#engine-note")!;
+
+  /** mpv 来源标签：随包运行时 / 系统 mpv / QUAVER_MPV 指定（排障时一眼看出跑的哪一份） */
+  const MPV_SOURCE_LABEL: Record<string, string> = { bundled: "随包运行时", path: "系统 mpv", env: "QUAVER_MPV 指定" };
+
+  async function paintBackend() {
+    const st = await player.probeEngine();
+    radios.forEach((r) => {
+      r.disabled = r.value === "MPV" && !st.available;
+      r.checked = r.value === getDecode();
+      r.onchange = () => { if (r.checked) void player.setBackend(r.value as "MPV" | "Blink").then(paintAll); };
+    });
+    const src = MPV_SOURCE_LABEL[st.source] ?? "";
+    engNote.textContent = player.backend === "mpv"
+      ? `- MPV 引擎运行中${src ? "（" + src + "）" : ""}`
+      : st.available ? `- 默认 MPV（${src}），当前浏览器兜底` : "- " + (st.reason || "mpv 不可用，已回退浏览器音频");
+  }
+
+  async function paintDevices() {
+    devSel.disabled = true;
+    devSel.onchange = null;
+    const r = await player.listAudioDevices();
+    if (!r) {
+      devSel.innerHTML = `<option>系统默认</option>`;
+      devHint.textContent = "浏览器 <audio> 后端：跟随系统输出设备；切换到 MPV 引擎后可在此直选设备。";
+      return;
+    }
+    devSel.innerHTML = `<option value="auto">系统默认</option>`
+      + r.devices.map((d) => `<option value="${escHtml(d.id)}">${escHtml(d.desc)}</option>`).join("");
+    const cur = r.devices.some((d) => d.id === r.current) ? r.current : "auto";
+    devSel.value = cur;
+    devSel.disabled = false;
+    devHint.textContent = "MPV 引擎直连输出设备（PipeWire/Pulse/ALSA…），切换即时生效，无需重启。";
+    devSel.onchange = () => { void player.selectAudioDevice(devSel.value); };
+  }
+
+  async function paintAll() { await paintBackend(); await paintDevices(); }
+  void paintAll();
+  // 引擎传输热切换（启动探测/设置页切换）后刷新设备列表——只在后端真正变化时，别跟着 4Hz notify 空转
+  let lastBackend = player.backend;
+  player.on(() => {
+    if (player.backend !== lastBackend) {
+      lastBackend = player.backend;
+      void paintBackend();
+      void paintDevices();
+    }
+  });
 
   // 默认音质：档位由后端按会员等级下发（/stream/tiers）；locked 档画锁标不可选。
   const qBox = wrap.querySelector<HTMLElement>("#quality-grid")!;

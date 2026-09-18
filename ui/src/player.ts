@@ -1,6 +1,10 @@
 // Quaver — 全局播放器状态机（常驻于 SPA 壳层，跨视图不销毁，音频不中断）
 // 订阅式：任何状态变化 notify 所有 UI（播放条 / 正在播放页 / 队列面板）。
+// 音频走 Transport 抽象（src/lib/transport.ts）：默认 mpv 原生引擎（Electron 壳层），
+// 可选浏览器 <audio> 兜底；曲目/队列/循环/歌词归本层，位置/时长/播放态真相在传输层。
 import { api, postJson, coverUrl, resolveStreamUrl, effectiveQuality, getSessionQuality, setSessionQuality, setLastStream, writeSongType, type StreamResult } from "./lib/api";
+import { getDecode, setDecode, getAudioDevice, setAudioDevice, setFade, FADE_PRESETS, type DecodeBackend, type FadePreset } from "./lib/prefs";
+import { WebTransport, EngineTransport, type Transport, type TransportEvent, type AudioDeviceInfo } from "./lib/transport";
 import { parseLrc, type LyricLine } from "./lyric";
 
 export type Song = {
@@ -15,6 +19,8 @@ export type Song = {
 };
 
 export type Mode = "off" | "all" | "one";
+/** 实际生效的播放管线（transport.kind 投影；设置页据此展示） */
+export type ActiveBackend = "mpv" | "web";
 
 type Listener = () => void;
 
@@ -31,7 +37,7 @@ const LOVED_MAX = 1000;
 const LOVED_TTL = 60_000;
 
 class Player {
-  audio = new Audio();
+  private transport: Transport = new WebTransport();
   queue: Song[] = [];
   index = -1;
   mode: Mode = "all";
@@ -52,39 +58,181 @@ class Player {
   expanded = false; // 正在播放页是否展开
   queueOpen = false;
   showTrans = localStorage.getItem(TRANS_KEY) !== "0"; // 歌词翻译显示开关（默认开）
+  /** 实际生效后端（"mpv"=原生引擎；"web"=浏览器 <audio>） */
+  backend: ActiveBackend = "web";
+  /** 后端不可用/回退原因（设置页提示；空 = 正常） */
+  backendNotice = "";
+  /** 引擎（mpv）版本串；未拉起时为空 */
+  engineVersion = "";
   private _vol = 0.8;    // 0..1（静音前保留）
   private _muted = false;
   private listeners = new Set<Listener>();
   private lyricSeq = 0;
   private playSeq = 0;   // startCurrent 竞态令牌：换曲即作废上一轮
   private prefetch = new Map<string, Promise<StreamResult>>(); // mid+档 → 已协商流（单击预热，双击秒起播）
-  private pendingSeek = 0; // 换音质续播：新流 metadata 就绪后跳到旧进度
+  private pendingSeek = 0; // 换音质续播：新流时长就绪后跳到旧进度
+  /** 后端选择完成（首播若发生在启动检查完成前，startCurrent 会等它） */
+  private backendInit: Promise<void>;
 
   constructor() {
-    this.audio.preload = "auto";
+    this.bindTransport(this.transport);
     // 音量持久化：quaver.volume.v1 (0..1) + quaver.muted.v1 ("1")
     const stored = parseFloat(localStorage.getItem(VOL_KEY) ?? "");
     this._vol = isFinite(stored) ? Math.max(0, Math.min(1, stored)) : 0.8;
     this._muted = localStorage.getItem(MUTE_KEY) === "1";
     this.applyVolume();
-    this.audio.addEventListener("timeupdate", () => this.notify());
-    this.audio.addEventListener("durationchange", () => this.consumePendingSeek());
-    this.audio.addEventListener("loadedmetadata", () => this.consumePendingSeek());
-    this.audio.addEventListener("play", () => this.notify());
-    this.audio.addEventListener("pause", () => this.notify());
-    this.audio.addEventListener("ended", () => this.onEnded());
-    // 起播后仍需缓冲（网络卡顿）→ 保持加载指示；playing 事件说明已能出声
-    this.audio.addEventListener("waiting", () => { if (this.current) { this.loading = true; this.notify(); } });
-    this.audio.addEventListener("playing", () => { if (this.loading) { this.loading = false; this.error = ""; this.notify(); } });
-    this.audio.addEventListener("canplay", () => { if (this.loading && !this.audio.paused) { this.loading = false; this.notify(); } });
-    this.audio.addEventListener("stalled", () => { if (this.current && !this.audio.paused) { this.loading = true; this.notify(); } });
-    this.audio.addEventListener("error", () => {
-      // src 加载/解码失败（含 token 过期、上游断流）→ 可重试错误态，避免永久转圈
-      if (!this.current || !this.audio.src) return;
-      this.loading = false;
-      this.error = "音频流加载失败，可能已过期：再次点击播放或换一首";
+    // 默认 MPV：启动即探测可用性并热切换传输（浏览器 dev / mpv 缺失时留在 <audio>）
+    this.backendInit = this.initBackend();
+  }
+
+  // —— 传输层接线 ——
+
+  private bindTransport(t: Transport) {
+    this.transport = t;
+    t.onEvent((e) => this.onTransportEvent(e));
+  }
+
+  private onTransportEvent(e: TransportEvent) {
+    switch (e.type) {
+      case "time":
+        this.notify();
+        break;
+      case "duration":
+        this.consumePendingSeek();
+        this.notify();
+        break;
+      case "play":
+      case "pause":
+        this.notify();
+        break;
+      case "waiting": // 起播后仍需缓冲（网络卡顿）→ 保持加载指示
+        if (this.current) { this.loading = true; this.notify(); }
+        break;
+      case "playing": // playing = 真的出声了（起播/缓冲恢复）
+        if (this.loading) { this.loading = false; this.error = ""; this.notify(); }
+        break;
+      case "canplay":
+        if (this.loading && !this.transport.paused) { this.loading = false; this.notify(); }
+        break;
+      case "ended":
+        this.onEnded();
+        break;
+      case "error":
+        // src 加载/解码失败（含 token 过期、上游断流、mpv 退出）→ 可重试错误态，避免永久转圈
+        if (!this.current || !this.transport.src) return;
+        this.loading = false;
+        this.error = e.message || "音频流加载失败，可能已过期：再次点击播放或换一首";
+        this.notify();
+        break;
+    }
+  }
+
+  /** 启动时的后端选择：偏好 MPV 且引擎可用 → 热切到引擎传输（此时通常还没开播，无损替换） */
+  private async initBackend() {
+    if (getDecode() !== "MPV" || !window.quaverAudio) return;
+    try {
+      const st = await window.quaverAudio.invoke({ cmd: "status" });
+      if (!st?.ok || !st.available) {
+        this.backendNotice = st?.reason || "mpv 不可用，已回退浏览器音频";
+        return;
+      }
+      const t = new EngineTransport(window.quaverAudio);
+      const dev = getAudioDevice();
+      if (dev) void t.setDevice?.(dev).catch(() => {});
+      const resume = this.swapTransport(t);
+      this.backend = "mpv";
+      this.engineVersion = String(st.version ?? "");
+      await resume; // 启动竞态里已有歌在播：换传输后从原进度续播
+    } catch {
+      this.backendNotice = "音频引擎桥接失败，已回退浏览器音频";
+    }
+    this.notify();
+  }
+
+  /** 换传输：停旧、绑新、复用音量。返回「续播闭包」（有歌在播/加载中时由调用方 await）；
+   *  播放态保留：原本在播就续播，原本暂停就停在原进度。 */
+  private swapTransport(t: Transport): Promise<void> {
+    const song = this.current;
+    const at = this.transport.position;
+    const wasPlaying = !this.transport.paused;
+    const hadStream = !!this.transport.src || this.loading;
+    try { this.transport.stop(); } catch { /* noop */ }
+    this.pendingSeek = 0;
+    this.bindTransport(t);
+    this.applyVolume();
+    if (!song || !hadStream || this.current !== song) return Promise.resolve();
+    return this.startCurrent(at > 1 ? at : 0, wasPlaying);
+  }
+
+  /** 设置页切换后端（默认 MPV / Blink 浏览器）：立即生效，当前曲目换轨续播、保留播放态 */
+  async setBackend(kind: DecodeBackend): Promise<void> {
+    setDecode(kind);
+    const wantEngine = kind === "MPV";
+    const isEngine = this.transport.kind === "engine";
+    if (wantEngine === isEngine) { this.notify(); return; }
+    if (!wantEngine) {
+      await this.swapTransport(new WebTransport());
+      this.backend = "web";
+      this.backendNotice = "";
+      this.engineVersion = "";
       this.notify();
-    });
+      return;
+    }
+    if (!window.quaverAudio) {
+      this.backendNotice = "当前环境无原生音频引擎（浏览器模式）";
+      this.notify();
+      return;
+    }
+    try {
+      const st = await window.quaverAudio.invoke({ cmd: "status" });
+      if (!st?.ok || !st.available) {
+        this.backendNotice = st?.reason ?? "mpv 不可用";
+        this.notify();
+        return;
+      }
+      const t = new EngineTransport(window.quaverAudio);
+      const dev = getAudioDevice();
+      if (dev) void t.setDevice?.(dev).catch(() => {});
+      await this.swapTransport(t);
+      this.backend = "mpv";
+      this.engineVersion = String(st.version ?? "");
+      this.backendNotice = "";
+    } catch (e: any) {
+      this.backendNotice = String(e?.message ?? e);
+    }
+    this.notify();
+  }
+
+  /** 引擎可用性（设置页禁用态/提示用；后端偏好的归 setBackend） */
+  async probeEngine(): Promise<{ available: boolean; reason: string; version: string; source: string }> {
+    if (!window.quaverAudio) return { available: false, reason: "当前环境无原生音频引擎", version: "", source: "" };
+    try {
+      const st = await window.quaverAudio.invoke({ cmd: "status" });
+      return { available: !!st?.ok && !!st.available, reason: st?.reason ?? "", version: String(st?.version ?? ""), source: String(st?.source ?? "") };
+    } catch {
+      return { available: false, reason: "音频引擎桥接失败", version: "", source: "" };
+    }
+  }
+
+  /** 音频设备列表（仅引擎传输支持；web 返回 null） */
+  async listAudioDevices(): Promise<{ current: string; devices: AudioDeviceInfo[] } | null> {
+    if (!this.transport.listDevices) return null;
+    try { return await this.transport.listDevices(); } catch { return null; }
+  }
+
+  /** 选择音频设备（持久化 + 应用到引擎） */
+  async selectAudioDevice(id: string): Promise<boolean> {
+    setAudioDevice(id);
+    if (!this.transport.setDevice) return false;
+    try { await this.transport.setDevice(id); return true; } catch { return false; }
+  }
+
+  /** 淡入淡出预设（持久化 + 立即下发时长；仅引擎后端消费） */
+  async setFadePreset(p: FadePreset): Promise<void> {
+    setFade(p);
+    const ms = FADE_PRESETS[p];
+    if (!this.transport.setFade) return;
+    try { await this.transport.setFade(ms.inMs, ms.outMs); } catch { /* 引擎不在：下次建立传输时随配置下发 */ }
   }
 
   on(fn: Listener) {
@@ -96,16 +244,20 @@ class Player {
   notifyPublic() { this.notify(); }
 
   get current(): Song | undefined { return this.queue[this.index]; }
-  get playing() { return !this.audio.paused; }
-  get time() { return this.audio.currentTime || 0; }
-  get duration() { return this.audio.duration || this.current?.interval || 0; }
+  get playing() { return !this.transport.paused; }
+  get paused() { return this.transport.paused; }
+  get time() { return this.transport.position; }
+  get duration() { return this.transport.duration || this.current?.interval || 0; }
+  /** 供 MPRIS/外部控制的暂停（与 toggle 分离：不带重试/取消语义） */
+  pause() { if (!this.transport.paused) this.transport.pause(); }
+  /** 供 MPRIS/外部控制的续播 */
+  resume() { if (this.transport.paused && this.transport.src) void this.transport.play().catch(() => {}); }
 
   // —— 音量 ——
   get volume() { return this._vol; }        // 0..1（静音时保留原值）
   get muted() { return this._muted; }
   private applyVolume() {
-    this.audio.volume = this._muted ? 0 : this._vol;
-    this.audio.muted = false; // 统一走 volume，避免双通道状态不一致
+    this.transport.setVolume(this._vol, this._muted);
   }
   setVolume(v: number, unmute = true) {
     this._vol = Math.max(0, Math.min(1, v));
@@ -149,30 +301,29 @@ class Player {
   }
 
   private consumePendingSeek() {
-    if (this.pendingSeek > 1 && isFinite(this.audio.duration) && this.audio.duration > this.pendingSeek) {
+    const dur = this.transport.duration;
+    if (this.pendingSeek > 1 && dur > this.pendingSeek) {
       const t = this.pendingSeek;
       this.pendingSeek = 0;
-      try { this.audio.currentTime = t; } catch { /* 稍后 timeupdate 再补 */ this.pendingSeek = t; }
-    } else if (this.pendingSeek > 1 && !isFinite(this.audio.duration)) {
-      /* 元数据未就绪：保留 pendingSeek 等下一次 durationchange/loadedmetadata */
+      try { this.transport.seek(t); } catch { /* 稍后 time 事件再补 */ this.pendingSeek = t; }
+    } else if (this.pendingSeek > 1 && !dur) {
+      /* 元数据未就绪：保留 pendingSeek 等下一次 duration 事件 */
     } else {
       this.pendingSeek = 0;
     }
     this.notify();
   }
 
-  /** 立即打断当前取链/缓冲并跳转（双击新歌用：旧 audio.src 的排队 play promise 一并作废） */
+  /** 立即打断当前取链/缓冲并跳转（双击新歌用：旧流的排队 play promise 一并作废） */
   private interrupt() {
     this.playSeq++;
     this.loading = false;
     this.error = "";
     this.pendingSeek = 0;
-    try { this.audio.pause(); } catch { /* noop */ }
-    this.audio.removeAttribute("src"); // 断开旧流下载（token 中继无 Range 请求即停）
-    try { this.audio.load(); } catch { /* noop */ } // 让旧 play() promise 以 AbortError 结束
+    try { this.transport.stop(); } catch { /* noop */ }
   }
 
-  private async startCurrent(resumeTo = 0) {
+  private async startCurrent(resumeTo = 0, autoplay = true) {
     const s = this.current;
     this.interrupt();
     this.lyrics = [];
@@ -182,19 +333,23 @@ class Player {
     this.notify();
     const seq = this.playSeq;
     try {
-      const r = await this.getStream(s); // 命中单击预取的链接 → 直接跳过取链
+      await this.backendInit; // 首播发生在启动后端检查完成前：等检查定再挂流
       if (seq !== this.playSeq || this.current !== s) return; // 期间又切了歌：本轮作废
+      const r = await this.getStream(s); // 命中单击预取的链接 → 直接跳过取链
+      if (seq !== this.playSeq || this.current !== s) return;
       setLastStream({ tier: r.tier, label: r.label, degraded: r.degraded });
-      this.applyStream(r.url);
-      if (resumeTo > 1) this.pendingSeek = resumeTo; // 换音质等场景：元数据就绪后从旧进度续播
-      try {
-        await this.audio.play();
-      } catch (pe: any) {
-        // AbortError = play 被更新的 load 打断。旧轮次直接弃；新轮次重试一次再放弃。
-        if (pe?.name === "AbortError") {
-          if (seq !== this.playSeq || this.current !== s) return;
-          await this.audio.play(); // load 竞态后的补播（此时资源选定应已稳定）
-        } else throw pe;
+      await this.transport.load(r.url, { paused: !autoplay }); // web: 赋 src；engine: loadfile replace
+      if (resumeTo > 1) this.pendingSeek = resumeTo; // 换音质/换后端：时长就绪后从旧进度续播
+      if (autoplay) {
+        try {
+          await this.transport.play();
+        } catch (pe: any) {
+          // AbortError = play 被更新的 load 打断（web）。旧轮次直接弃；新轮次重试一次再放弃。
+          if (pe?.name === "AbortError") {
+            if (seq !== this.playSeq || this.current !== s) return;
+            await this.transport.play(); // load 竞态后的补播（此时资源选定应已稳定）
+          } else throw pe;
+        }
       }
       if (seq !== this.playSeq) return;
       this.loading = false;
@@ -207,12 +362,6 @@ class Player {
     }
     if (seq === this.playSeq && this.current === s) this.fetchLyric(s); // 被作废的轮次不拉歌词，防竞态覆盖
     this.notify();
-  }
-
-  /** 挂 URL 到 audio。注意：src 赋值本身就会触发媒体 load 算法，绝不能再补 load()——
-   *  双 load 会把随后的 play() 以 AbortError 打断（"play() request was interrupted by a new load request"）。 */
-  private applyStream(url: string) {
-    this.audio.src = url;
   }
 
   // —— 单击预加载：行点击即后台协商播放链接（含上游取链+嗅探这两次慢 RTT），
@@ -265,17 +414,17 @@ class Player {
   toggle() {
     if (!this.current) return;
     // 上轮取链/加载失败或流已断开 → 重新协商起播（重试语义）
-    if (this.error || (!this.audio.src && !this.loading)) { void this.startCurrent(this.audio.currentTime > 1 ? this.audio.currentTime : 0); return; }
+    if (this.error || (!this.transport.src && !this.loading)) { void this.startCurrent(this.transport.position > 1 ? this.transport.position : 0); return; }
     if (this.loading) { this.interrupt(); this.notify(); return; } // 加载中再点 = 取消
-    if (this.audio.paused) void this.audio.play().catch(() => {});
-    else this.audio.pause();
+    if (this.transport.paused) void this.transport.play().catch(() => {});
+    else this.transport.pause();
   }
 
   // —— 播放条音质切换（会话级：不持久化；带 Fallback 协商，切档即从当前进度重挂流） ——
   switchQuality(q: Parameters<typeof setSessionQuality>[0]) {
     const cur = getSessionQuality();
-    if ((q ?? null) === cur && this.current && this.audio.src && !this.error) { this.notify(); return; } // 同档重复点：不打断
-    const at = this.audio.currentTime;
+    if ((q ?? null) === cur && this.current && this.transport.src && !this.error) { this.notify(); return; } // 同档重复点：不打断
+    const at = this.transport.position;
     setSessionQuality(q);
     this.prefetch.clear();
     this.prefetchedMid = "";
@@ -285,13 +434,17 @@ class Player {
 
   next(auto = false) {
     if (!this.queue.length) return;
-    if (auto && this.mode === "one") { this.audio.currentTime = 0; void this.audio.play(); return; }
+    if (auto && this.mode === "one") {
+      this.transport.seek(0);
+      if (this.transport.paused) void this.transport.play().catch(() => {});
+      return;
+    }
     this.jump((this.index + 1) % this.queue.length);
   }
 
   prev() {
     if (!this.queue.length) return;
-    if (this.time > 3) { this.audio.currentTime = 0; return; }
+    if (this.time > 3) { this.transport.seek(0); return; }
     this.jump((this.index - 1 + this.queue.length) % this.queue.length);
   }
 
@@ -307,9 +460,8 @@ class Player {
   }
 
   seek(sec: number) {
-    if (isFinite(this.audio.duration) && this.audio.duration) {
-      this.audio.currentTime = Math.max(0, Math.min(sec, this.audio.duration));
-    }
+    const d = this.transport.duration;
+    if (d > 0) this.transport.seek(Math.max(0, Math.min(sec, d)));
     this.notify();
   }
 

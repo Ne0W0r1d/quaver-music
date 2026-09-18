@@ -19,3 +19,14 @@ contextBridge.exposeInMainWorld("quaverMpris", {
       try { cb(msg); } catch (err) { console.warn("mpris cmd failed", err); }
     }),
 });
+
+// 音频引擎（mpv 后端）：invoke 走请求/应答（handle 返回值可序列化），事件为主进程主动推。
+// 渲染层 Transport 抽象（src/lib/transport.ts）据此实现 EngineTransport；
+// 浏览器 dev（无 preload）下 window.quaverAudio 不存在 → 自动落到 <audio> WebTransport。
+contextBridge.exposeInMainWorld("quaverAudio", {
+  invoke: (cmd) => ipcRenderer.invoke("quaver:audio", cmd),
+  onEvent: (cb) =>
+    ipcRenderer.on("quaver:audio-event", (_e, ev) => {
+      try { cb(ev); } catch (err) { console.warn("audio engine event failed", err); }
+    }),
+});
