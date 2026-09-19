@@ -1,9 +1,11 @@
 // Quaver — 路由视图表（仅内容区渲染；播放器/侧栏常驻）
 // 视图函数: async (root, query) => cleanup?
 import { api, upPic, getQuality, setQuality, setSessionQuality, getStreamTiers, identityBadges } from "./lib/api";
-import { renderSongRows, loadLiked, type RowHooks } from "./lib/songs";
+import { renderSongRows, type RowHooks } from "./lib/songs";
+import { songListTools } from "./components/ListTools";
 import { getMyMusicid, isFavSonglist, loadFavSonglists, onFavSonglistsChange, toggleFavSonglist } from "./lib/favs";
 import { pushHistory } from "./components/SearchBox";
+import { enqueueNextWithToast, toast } from "./components/SongMenu";
 import { player } from "./player";
 import {
   getTheme, setTheme, getDecor, setDecor,
@@ -14,6 +16,7 @@ import {
   type FadePreset,
 } from "./lib/prefs";
 import { configInfo, revealConfig, resetConfig } from "./lib/config";
+import { vipCardHtml } from "./lib/vip";
 
 const h = (tag: string, cls: string, html = "") => {
   const el = document.createElement(tag);
@@ -67,23 +70,205 @@ function mountHead(root: HTMLElement, opts: {
 }
 
 // —— 首页：大标题 + 推荐歌单卡片网格（官方推荐 CGI，无需登录态） ——
-async function homeView(root: HTMLElement) {
-  root.append(h("h1", "page-title", "首页"));
-  const grid = h("div", "grid playlist-grid");
-  grid.innerHTML = `<div class="muted">加载中…</div>`;
-  root.append(grid);
+// 上游歌单简介夹带 <br> 等展示标记；首页精选只取纯文本，避免把接口 HTML 带进页面。
+const plainText = (s: unknown) => String(s ?? "")
+  .replace(/<br\s*\/?>/gi, " ")
+  .replace(/<[^>]*>/g, " ")
+  .replace(/&nbsp;/gi, " ")
+  .replace(/&amp;/gi, "&")
+  .replace(/&lt;/gi, "<")
+  .replace(/&gt;/gi, ">")
+  .replace(/&quot;/gi, '"')
+  .replace(/\s+/g, " ")
+  .trim();
 
-  const d: any = await api("/recommend/songlist?num=30");
-  const list: any[] = d?.songlists ?? [];
-  grid.innerHTML = "";
-  for (const x of list) {
-    const a = h("a", "card") as HTMLAnchorElement;
-    a.href = `#/playlist?id=${encodeURIComponent(x.id ?? "")}&name=${encodeURIComponent(x.title ?? "")}`;
-    a.innerHTML = `<div class="art"><img src="${upPic(x.picurl)}" alt="" loading="lazy"/></div>
-      <div class="name">${x.title ?? "歌单"}</div><div class="sub">${x.creator_nick ? x.creator_nick + " 制作" : "推荐歌单"}</div>`;
-    grid.append(a);
+const compactCount = (value: unknown) => {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const fmt = (v: number) => v.toFixed(v >= 100 ? 0 : 1).replace(/\.0$/, "");
+  if (n >= 100_000_000) return `${fmt(n / 100_000_000)} 亿`;
+  if (n >= 10_000) return `${fmt(n / 10_000)} 万`;
+  return Math.round(n).toLocaleString("zh-CN");
+};
+
+// 卡片播放（悬停浮出的圆形播放键）：取集合歌曲后直接开播，失败则落到详情页
+async function cardPlay(kind: "playlist" | "album" | "singer", id: string, fallbackHash: string) {
+  try {
+    let songs: any[] = [];
+    if (kind === "playlist") {
+      const d: any = await api(`/songlist/${id}/detail?page=1&num=100`);
+      songs = d?.songs ?? [];
+    } else if (kind === "album") {
+      const d: any = await api(`/album/${encodeURIComponent(id)}/songs?num=100`);
+      songs = d?.song_list ?? [];
+    } else {
+      const d: any = await api(`/singer/${encodeURIComponent(id)}/songs?num=50&page=1&order=1`);
+      songs = d?.song_list ?? [];
+    }
+    if (!songs.length) throw new Error("empty");
+    player.playList(songs, 0);
+  } catch {
+    location.hash = fallbackHash;
   }
-  if (!list.length) grid.innerHTML = `<div class="muted">暂无推荐</div>`;
+}
+
+// 卡片：div[role=button] 导航；悬停播放键取歌开播（歌手卡无播放键——人不是可播集合）。
+// 沿用本地既有卡面类名（.card/.art/.name/.sub），只改外层容器为可网格拉伸的自适应卡。
+function navCard(href: string, cover: string, title: string, sub: string, play?: () => void): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "card";
+  el.tabIndex = 0;
+  el.setAttribute("role", "button");
+  el.innerHTML = `<div class="art">${cover ? `<img src="${cover}" alt="" loading="lazy"/>` : ""}
+      ${play ? `<button type="button" class="card-play" aria-label="播放" title="播放">${PLAY_SVG}</button>` : ""}</div>
+    <div class="name">${escHtml(title)}</div><div class="sub">${escHtml(sub)}</div>`;
+  el.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).closest(".card-play")) return;
+    location.hash = href;
+  });
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.target as HTMLElement) === el) { e.preventDefault(); location.hash = href; }
+  });
+  const pb = el.querySelector(".card-play");
+  if (pb && play) pb.addEventListener("click", (e) => { e.stopPropagation(); play(); });
+  return el;
+}
+
+const PLAY_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.53.85l10-6.5a1 1 0 0 0 0-1.7l-10-6.5A1 1 0 0 0 8 5.5z"/></svg>`;
+
+// 区块错误/空态：标题 + 说明 + 可选重试
+function homeStatus(box: HTMLElement, title: string, note: string, retry?: () => void) {
+  box.innerHTML = "";
+  const status = h("div", "home-status", `
+    <p class="home-status__title">${escHtml(title)}</p>
+    <p class="muted">${escHtml(note)}</p>`);
+  if (retry) {
+    const btn = h("button", "ghost-btn", "重试") as HTMLButtonElement;
+    btn.type = "button";
+    btn.onclick = retry;
+    status.append(btn);
+  }
+  box.append(status);
+}
+
+// —— 首页：页头 + 双栏领区（今日精选 / 新歌速递）+ 发丝线分隔的推荐网格 ——
+// 两个数据源并行、独立降级：任一失败不影响另一块，各自原地给重试。
+async function homeView(root: HTMLElement) {
+  root.append(h("div", "home-pagehead", `
+    <h1 class="page-title">首页</h1>
+    <p class="muted">从一张歌单开始，听见今天的新声音</p>`));
+
+  const lead = h("div", "home-lead");
+
+  const featured = h("section", "home-panel");
+  featured.innerHTML = `<div class="sec-head">
+    <h2>今日精选</h2><span class="muted">编辑推荐</span>
+  </div>`;
+  const featureHost = h("div", "home-feature-host", `<div class="muted">加载中…</div>`);
+  featured.append(featureHost);
+
+  const newest = h("section", "home-panel");
+  const newHead = h("div", "sec-head sec-head--split");
+  newHead.innerHTML = `<div class="sec-head__title"><h2>新歌速递</h2><span class="muted">最新发行</span></div>`;
+  const playNew = h("button", "ghost-btn", "播放全部") as HTMLButtonElement;
+  playNew.type = "button";
+  playNew.disabled = true;
+  newHead.append(playNew);
+  const newRows = h("div", "rows home-new-list", `<div class="muted">加载中…</div>`);
+  newest.append(newHead, newRows);
+
+  lead.append(featured, newest);
+
+  const recommendations = h("section", "home-recommendations");
+  recommendations.innerHTML = `<div class="sec-head">
+    <h2>推荐歌单</h2><span class="muted">为你挑选</span>
+  </div>`;
+  const grid = h("div", "grid playlist-grid home-cards", `<div class="muted">加载中…</div>`);
+  recommendations.append(grid);
+
+  root.append(lead, recommendations);
+
+  const loadPlaylists = async () => {
+    featureHost.innerHTML = `<div class="muted">加载中…</div>`;
+    grid.innerHTML = `<div class="muted">加载中…</div>`;
+    try {
+      const d: any = await api("/recommend/songlist?page=1&num=13");
+      const list: any[] = d?.songlists ?? [];
+      const first = list[0];
+      if (!first) {
+        homeStatus(featureHost, "暂时没有今日精选", "稍后回来，这里会出现新的推荐", loadPlaylists);
+        grid.innerHTML = `<div class="muted">暂无推荐歌单</div>`;
+        return;
+      }
+
+      const id = String(first.id ?? "");
+      const title = String(first.title ?? "歌单");
+      const href = `#/playlist?id=${encodeURIComponent(id)}&name=${encodeURIComponent(title)}`;
+      const meta = [
+        first.creator_nick ? `${first.creator_nick} 制作` : "",
+        first.songnum ? `${first.songnum} 首` : "",
+        compactCount(first.listennum) ? `${compactCount(first.listennum)}次播放` : "",
+      ].filter(Boolean).join(" · ");
+      const feature = h("div", "home-feature");
+      feature.innerHTML = `
+        <div class="home-feature__art">${first.picurl ? `<img src="${escHtml(upPic(String(first.picurl)))}" alt=""/>` : ""}</div>
+        <div class="home-feature__main">
+          <p class="home-feature__overline">PLAYLIST</p>
+          <h3 class="home-feature__title">${escHtml(title)}</h3>
+          ${meta ? `<p class="muted home-feature__meta">${escHtml(meta)}</p>` : ""}
+          ${first.desc ? `<p class="home-feature__desc">${escHtml(plainText(first.desc))}</p>` : ""}
+          <div class="home-feature__actions"></div>
+        </div>`;
+      const actions = feature.querySelector<HTMLElement>(".home-feature__actions")!;
+      const play = h("button", "ghost-btn", "播放歌单") as HTMLButtonElement;
+      play.type = "button";
+      play.onclick = () => { void cardPlay("playlist", id, href); };
+      const open = h("button", "ghost-btn ghost-btn--quiet", "查看详情") as HTMLButtonElement;
+      open.type = "button";
+      open.onclick = () => { location.hash = href; };
+      actions.append(play, open);
+      featureHost.replaceChildren(feature);
+
+      grid.innerHTML = "";
+      for (const x of list.slice(1, 13)) {
+        const cardId = String(x.id ?? "");
+        const cardTitle = String(x.title ?? "歌单");
+        const cardHref = `#/playlist?id=${encodeURIComponent(cardId)}&name=${encodeURIComponent(cardTitle)}`;
+        const listens = compactCount(x.listennum);
+        const sub = [x.creator_nick || "", listens ? `${listens}次播放` : ""].filter(Boolean).join(" · ") || "歌单";
+        grid.append(navCard(cardHref, upPic(x.picurl), cardTitle, sub,
+          () => cardPlay("playlist", cardId, cardHref)));
+      }
+      if (!grid.childElementCount) grid.innerHTML = `<div class="muted">暂无更多推荐</div>`;
+    } catch (e: any) {
+      homeStatus(featureHost, "推荐加载失败", String(e?.message ?? "网络暂时不可用"), loadPlaylists);
+      grid.innerHTML = `<div class="muted">重新加载后显示推荐歌单</div>`;
+    }
+  };
+
+  const loadNewSongs = async () => {
+    playNew.disabled = true;
+    playNew.onclick = null;
+    newRows.innerHTML = `<div class="muted">加载中…</div>`;
+    try {
+      const d: any = await api("/recommend/newsong?type=5");
+      const songs: any[] = (d?.songs ?? []).slice(0, 6);
+      if (!songs.length) {
+        homeStatus(newRows, "暂时没有新歌", "稍后回来看看", loadNewSongs);
+        return;
+      }
+      playNew.disabled = false;
+      playNew.onclick = () => player.playList(songs, 0);
+      renderSongRows(newRows, songs, {
+        showAlbum: false,
+        onPlay: (_song, index, all) => player.playList(all, index),
+      });
+    } catch (e: any) {
+      homeStatus(newRows, "新歌加载失败", String(e?.message ?? "网络暂时不可用"), loadNewSongs);
+    }
+  };
+
+  await Promise.all([loadPlaylists(), loadNewSongs()]);
 }
 
 // —— 歌单页收藏按钮（在线收藏写接口：PlaylistFavWrite Fav/CancelFavPlaylist） ——
@@ -160,12 +345,13 @@ async function playlistView(root: HTMLElement, q: URLSearchParams) {
   root.innerHTML = "";
 
   const logo = upPic(info?.picurl || "");
-  const metaParts = [info?.creator?.nick ? `${info.creator.nick} 制作` : "", info?.songnum ? `${info.songnum} 首` : ""].filter(Boolean);
+  const creator = info?.creator?.nick ? `${info.creator.nick} 制作` : "";
+  let songCount = Number(info?.songnum ?? songs.length) || songs.length;
   await favsReady.catch(() => {});
-  mountHead(root, {
+  const head = mountHead(root, {
     artHtml: logo ? `<img src="${logo}" alt=""/>` : "",
     name: info?.title ?? name,
-    meta: metaParts.join(" · "),
+    meta: [creator, `${songCount} 首`].filter(Boolean).join(" · "),
     desc: info?.desc || "",
     actions: await favSonglistButton({
       id,
@@ -177,13 +363,51 @@ async function playlistView(root: HTMLElement, q: URLSearchParams) {
   });
 
   const rows = h("div", "rows");
-  root.append(rows);
   if (!songs.length) {
+    root.append(rows);
     rows.innerHTML = `<div class="muted">歌单为空或不可见</div>`;
     return;
   }
-  const hooks: RowHooks = { showAlbum: true, onPlay: (s, i, all) => player.playList(all, i) };
-  renderSongRows(rows, songs, hooks);
+  // 工具条（本地搜索 + 排序）：控件靠右，计数在左。实现见 components/ListTools.ts
+  // all 恒为服务端原序（orderlist = 加入歌单的时间），工具条只读它，排序作用在副本上。
+  const all = songs;
+  const tools = songListTools({
+    source: () => all,
+    hint: "在歌单内搜索",
+    paint: (list) => {
+      if (!list.length) { rows.innerHTML = `<div class="muted">没有匹配的歌曲</div>`; return; }
+      renderSongRows(rows, list, hooksFor());
+      player.markActive(); // 重排后当前曲可能换了行位置
+    },
+  });
+  root.append(tools.el, rows);
+  // 右键菜单的「从歌单删除」只给自有歌单（写接口要 dirid，读详情用 disstid —— 两者不同源）
+  const metaEl = head.querySelector<HTMLElement>(".pl-meta");
+  const myId = await getMyMusicid().catch(() => null);
+  const own = !!myId && Number(info?.creator?.musicid) === myId && Number(info?.dirid) > 0;
+
+  function hooksFor(): RowHooks {
+    return {
+      showAlbum: true,
+      // 双击播的是**当前看到的那一列**（排过序/筛过），不是服务端原序 —— 与眼睛一致
+      onPlay: (_s, i, all2) => player.playList(all2, i),
+      playlist: {
+        dirid: Number(info?.dirid ?? 0),
+        tid: Number(info?.id ?? 0),
+        title: info?.title ?? name,
+        removable: own,
+      },
+      onRemoved: (song) => {
+        // 从原序里也去掉，否则下次重排/筛选会把它放回来（行的淡出由 songs.ts 负责，这里不重画）
+        const at = all.indexOf(song);
+        if (at >= 0) all.splice(at, 1);
+        if (songCount > 0) songCount--;
+        if (metaEl) metaEl.textContent = [creator, `${songCount} 首`].filter(Boolean).join(" · ");
+        tools.refreshCount();
+      },
+    };
+  }
+  tools.repaint();
 }
 
 // 专辑卡网格（歌手页「专辑」标签 / 歌手全部专辑页共用同一套卡面）
@@ -284,7 +508,13 @@ async function singerView(root: HTMLElement, q: URLSearchParams) {
     panels.forEach((p, i) => (p.hidden = SINGER_TABS[i].key !== key));
     tabs.querySelectorAll<HTMLElement>(".tag").forEach((b) => b.classList.toggle("sel", b.dataset.tab === key));
   };
-  tabs.querySelectorAll<HTMLElement>(".tag").forEach((b) => (b.onclick = () => select(b.dataset.tab!)));
+  // 切换动画门闩（.tab-anim 见 style.css）：首次点击才挂上，首屏入场交给 .route.entering；
+  // 重复点当前标签直接返回，否则会把已显示的面板重播一次、看着像闪了一下。
+  tabs.querySelectorAll<HTMLElement>(".tag").forEach((b) => (b.onclick = () => {
+    if (b.classList.contains("sel")) return;
+    body.classList.add("tab-anim");
+    select(b.dataset.tab!);
+  }));
   select("hot");
 }
 
@@ -368,39 +598,91 @@ function listPage(root: HTMLElement, title: string, note?: string) {
   return rows;
 }
 
+/**
+ * 猜你喜欢：上游 `get_radio_track` **一次只给 5 首**（num 加大被忽略、回灌 song_ids 续拿报 22006），
+ * 好在每轮内容随机 —— 所以后端靠「串行多调几轮 + 按 mid 去重」凑量（并发会被上游 700000 拒）。
+ * 代价是**轮数 × 单轮耗时 ≈ 6s**：一口气等完就是 6 秒白屏。这里分两段取：
+ *   ① rounds=2（10 首，~2.4s）立刻出画面；② 再 rounds=4 补齐到 ~30 首后重画。
+ * 「换一批」走同一条链路：上游池子很大（实测 6 轮 30 首**零重复**），所以两批之间基本撞不上，
+ * 不需要把上一批的 mid 排除掉 —— 何况上游也不吃排除参数（`song_ids` 续拿就是 22006）。
+ * 取新批次**先攒在临时数组里、成了才整体换上**：换批失败时手上这批还在，不会一片空白。
+ */
 async function guessView(root: HTMLElement) {
-  const box = listPage(root, "猜你喜欢", "品味懂你意思");
-  try {
-    const d: any = await api("/recommend/guess");
-    const songs: any[] = d?.songs ?? [];
+  const box = listPage(root, "猜你喜欢", "无限电台一次只给 5 首，这里连取多轮去重凑成一批（先出 10 首，再补齐）");
+  // 换一批：页头下方、右侧对齐（与列表工具条同一版式语言）
+  const bar = h("div", "guess-bar");
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ghost-btn ghost-btn--quiet";
+  btn.textContent = "换一批";
+  btn.title = "重新向无限电台要一批（每批内容随机）";
+  bar.append(btn);
+  root.insertBefore(bar, box);
+
+  let songs: any[] = [];
+  let busy = false;
+
+  const paint = () => {
     if (!songs.length) { box.innerHTML = `<div class="muted">暂无推荐，登录后可得</div>`; return; }
+    // 双击播的是**当前看到的这一列**（补齐后列表会变长，指针以重画后的为准）
     renderSongRows(box, songs, { onPlay: (s, i, all) => player.playList(all, i) });
-  } catch (e: any) {
-    box.innerHTML = `<div class="muted">${e.message}</div>`;
+    player.markActive(); // 重画后当前曲可能换了行位置
+  };
+
+  async function load() {
+    if (busy) return;               // 按钮已禁用；这里防的是键盘/程序重复触发
+    busy = true;
+    btn.disabled = true;
+    btn.textContent = "取歌中…";
+    const fresh: any[] = [];        // 先攒在临时数组：失败时手上这批不动
+    const seen = new Set<string>();
+    const take = (more: any[]) => {
+      for (const s of more ?? []) {
+        const k = String(s?.mid ?? "");
+        if (!k || seen.has(k)) continue; // 多轮之间会撞歌
+        seen.add(k);
+        fresh.push(s);
+      }
+    };
+    try {
+      take(((await api<any>("/recommend/guess?rounds=2"))?.songs ?? []) as any[]);
+      if (fresh.length) { songs = fresh; paint(); }  // 首批立刻换上画面
+      take(((await api<any>("/recommend/guess?rounds=4"))?.songs ?? []) as any[]);
+      if (fresh.length) { songs = fresh; paint(); }  // 补齐（同一个引用随之变长）
+      else if (!songs.length) paint();               // 一首都没拿到 → 空态
+    } catch (e: any) {
+      // 第二批失败不算失败：保住首批（上游这条链路偶发节流，宁可少几首也别整页报错）
+      if (!songs.length) box.innerHTML = `<div class="muted">${e.message}</div>`;
+      else toast("换一批没成功，先留着当前这批", "err");
+    } finally {
+      busy = false;
+      btn.disabled = false;
+      btn.textContent = "换一批";
+    }
   }
+
+  btn.addEventListener("click", () => void load());
+  await load();
 }
 
 async function dailyView(root: HTMLElement) {
-  const box = listPage(root, "每日 30 首", '官方"每日30首"接口未开放；本页以「我喜欢」为基础，按日期种子稳定随机取 30 首。');
-  // 当日稳定种子：mulberry32(date) —— 同一天刷新顺序不变，隔天换一批
-  let t = (Math.floor(Date.now() / 86400000) * 2654435761) >>> 0;
-  const rnd = () => {
-    t = (t + 0x6d2b79f5) >>> 0;
-    let r = Math.imul(t ^ (t >>> 15), 1 | t);
-    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
-    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-  };
+  // 真的「每日30首」：它是**系统虚拟歌单**（dirid 固定 202，与「我喜欢」201 同一族），
+  // 每天由服务端重生成 30 首，disstid 每天都变 —— 所以后端按 dirid 取（见 /recommend/daily），
+  // 前端只管拿详情，结构与普通歌单完全一致（info/songs/total/hasmore）。
+  // 以前这页是假的：拿「我喜欢」按日期种子随机凑 30 首（官方接口未开放时的占位），现已接真接口。
+  const box = listPage(root, "每日 30 首", "QQ 音乐「每日30首」：每天按你的口味重算 30 首");
+  const note = root.querySelector<HTMLElement>(".page-note");
   try {
-    const pool = await loadLiked(box, {}, 500).catch(() => [] as any[]);
-    if (!pool.length) { box.innerHTML = `<div class="muted">需要先登录并收藏一些歌</div>`; return; }
-    const picked: any[] = [];
-    const idx = pool.map((_, i) => i);
-    while (picked.length < 30 && idx.length) {
-      const j = Math.floor(rnd() * idx.length);
-      picked.push(pool[idx.splice(j, 1)[0]]);
+    const d: any = await api("/recommend/daily?page=1&num=100"); // 30 首一把拿全，不用翻页
+    const songs: any[] = d?.songs ?? [];
+    // 服务端那句编辑语（「甄选私人好品味：今日份的 X、Y、Z…」）比我们自己编的说明好看
+    if (note && d?.info?.desc) note.textContent = d.info.desc;
+    if (!songs.length) {
+      box.innerHTML = `<div class="muted">今天的 30 首还没生成，稍后再来（也确认下是否已登录）</div>`;
+      return;
     }
     box.innerHTML = "";
-    renderSongRows(box, picked, { onPlay: (s, i, all) => player.playList(all, i) });
+    renderSongRows(box, songs, { showAlbum: true, onPlay: (s, i, all) => player.playList(all, i) });
   } catch (e: any) {
     box.innerHTML = `<div class="muted">${e.message} — 需要先登录</div>`;
   }
@@ -414,37 +696,59 @@ async function likedView(root: HTMLElement) {
   const cnt = h("span", "muted cnt");
   root.querySelector("h1")!.append(cnt);
   const box = h("div", "rows", `<div class="muted">加载中…</div>`);
-  root.append(box);
 
+  let items: any[] = []; // 原序 = 收藏顺序（服务端返回的顺序），工具条只读它
   let shown = 0; // 标题计数（服务端 total 优先：超预载上限时也报真实总数）
   const setCount = (n: number) => { shown = Math.max(0, n); cnt.textContent = shown ? `· ${shown} 首` : ""; };
   // 取消收藏：行淡出后移出本页 + 计数 -1。只在写接口确认后调用——失败已在 player 侧回滚，不会触发
   const dropRow = (song: any) => {
+    // 从原序里也摘掉：player.likedCache 是**换新数组**（filter），这里的 items 还指着旧数组，
+    // 不摘的话下次重排/筛选会把这行放回来。
+    const at = items.indexOf(song);
+    if (at >= 0) items.splice(at, 1);
     const key = String(song._key ?? song.mid ?? "");
     const row = key ? box.querySelector<HTMLElement>(`.row[data-songkey="${CSS.escape(key)}"]`) : null;
-    if (!row || row.classList.contains("leaving")) return;
-    row.classList.add("leaving");
+    if (row && !row.classList.contains("leaving")) {
+      row.classList.add("leaving");
+      setTimeout(() => row.remove(), 220);
+    }
     setCount(shown - 1);
-    setTimeout(() => row.remove(), 220);
+    tools.refreshCount();
   };
-  const paint = (songs: any[]) => {
-    setCount(Math.max(songs.length, player.likedTotal));
-    renderSongRows(box, songs, {
-      onPlay: (s, i, all) => player.playList(all, i),
-      onLove: (song, on) => { if (!on) dropRow(song); }, // 取消红心 = 取消单曲收藏 + 移出本页
-    });
-  };
+
+  // 工具条（本地搜索 + 排序；与歌单页共用 components/ListTools.ts）
+  const tools = songListTools({
+    source: () => items,
+    hint: "在我喜欢内搜索",
+    paint: (songs, st) => {
+      if (!songs.length) {
+        box.innerHTML = `<div class="muted">${st.filtering ? "没有匹配的歌曲" : "还没有收藏的歌曲"}</div>`;
+        return;
+      }
+      setCount(Math.max(items.length, player.likedTotal));
+      renderSongRows(box, songs, {
+        onPlay: (_s, i, all) => player.playList(all, i),
+        onLove: (song, on) => { if (!on) dropRow(song); }, // 取消红心 = 取消单曲收藏 + 移出本页
+      });
+      player.markActive(); // 重排后当前曲可能换了行位置
+    },
+  });
+  root.append(tools.el, box);
+  const adopt = (songs: any[]) => { items = songs; tools.repaint(); };
 
   // 预载命中（开机已拉回）：首帧直接出，红心默认全部点亮；随后按 TTL 后台对账，内容变了才重画
   const cached = player.likedCache as any[] | null;
-  if (cached) paint(cached);
+  if (cached) adopt(cached);
   const ok = await player.loadLoved();
   if (!ok) {
-    if (!cached) box.innerHTML = `<div class="muted">加载失败 — 需要先登录</div>`;
+    if (!cached) {
+      tools.el.remove(); // 拉不到就别摆一排没用的控件
+      box.innerHTML = `<div class="muted">加载失败 — 需要先登录</div>`;
+    }
     return;
   }
   const fresh: any[] = player.likedCache ?? [];
-  if (!cached || !sameMids(cached, fresh)) paint(fresh);
+  if (!cached || !sameMids(cached, fresh)) adopt(fresh);
 }
 
 // —— 设置页（对齐设计稿：外观设置 / 播放设置 / 调试 三区；不触碰侧栏与播放条） ——
@@ -456,116 +760,147 @@ async function settingsView(root: HTMLElement) {
     `<label><input type="radio" name="decode" value="${name}"${disabled ? " disabled" : ""}/>${label}${disabled ? ` <span class="muted soon">敬请期待</span>` : ""}</label>`;
 
   root.append(h("h1", "page-title", "设置"));
+  // 分区标签：只切显隐，不重渲染（各面板绑定一次常驻有效）
+  const tabs = h("div", "set-tabs", `
+    <button class="set-tab is-active" data-tab="appearance" type="button">外观</button>
+    <button class="set-tab" data-tab="playback" type="button">播放</button>
+    <button class="set-tab" data-tab="general" type="button">通用</button>`);
+  root.append(tabs);
   const wrap = h("div", "set-view");
   wrap.innerHTML = `
-    <section class="set-sec">
-      <h2>外观设置</h2>
-      <p class="muted set-note">在这里，可以设置 Quaver 的客户端外观</p>
-
-      <div class="set-sub">外观模式</div>
-      <div class="opt-cards" id="theme-cards">
-        <button class="opt-card" data-opt="system" type="button"><span class="sw sw-system"></span>跟随系统</button>
-        <button class="opt-card" data-opt="light" type="button"><span class="sw sw-light"></span>明镜白</button>
-        <button class="opt-card" data-opt="dark" type="button"><span class="sw sw-dark"></span>玄幻黑</button>
-      </div>
-
-      <div class="set-sub">窗口装饰 <span class="muted set-subnote">- 仅桌面端生效，切换后自动重建窗口</span></div>
-      <div class="opt-cards" id="decor-cards">
-        <button class="opt-card" data-opt="csd" type="button">自绘标题栏（CSD）</button>
-        <button class="opt-card" data-opt="ssd" type="button">系统标题栏（SSD）</button>
-      </div>
-
-      <div class="set-sub">关闭按钮行为 <span class="muted set-subnote">- 点窗口右上角 ✕ 时（CSD/SSD 通用）</span></div>
-      <div class="opt-cards" id="close-cards">
-        <button class="opt-card" data-opt="tray" type="button">缩放到托盘</button>
-        <button class="opt-card" data-opt="quit" type="button">退出程序</button>
-      </div>
-      <p class="muted set-hint">缩放到托盘：窗口隐藏，播放与系统托盘图标继续，托盘菜单「退出」才结束程序。</p>
-
-      <div class="set-sub">字体设置</div>
-      <div class="set-field"><span>界面字体</span>
-        <div class="font-row">
-          <select id="font-ui" aria-label="界面字体预设">${fontOptions}</select>
-          <input id="font-ui-list" type="text" spellcheck="false" autocomplete="off"
-            aria-label="界面字体 font-family 列表"
-            placeholder="留空，如 Source Han Sans, system-ui, sans-serif" />
+    <section class="set-panel" data-panel="appearance">
+      <div class="set-group">
+        <div class="set-label">外观模式</div>
+        <div class="opt-cards" id="theme-cards">
+          <button class="opt-card" data-opt="system" type="button"><span class="sw sw-system"></span>跟随系统</button>
+          <button class="opt-card" data-opt="light" type="button"><span class="sw sw-light"></span>明镜白</button>
+          <button class="opt-card" data-opt="dark" type="button"><span class="sw sw-dark"></span>玄幻黑</button>
         </div>
       </div>
-      <div class="set-field"><span>歌词字体</span>
-        <div class="font-row">
-          <select id="font-lyric" aria-label="歌词字体预设">${fontOptions}</select>
-          <input id="font-lyric-list" type="text" spellcheck="false" autocomplete="off"
-            aria-label="歌词字体 font-family 列表" placeholder="" />
+
+      <div class="set-group">
+        <div class="set-label">窗口装饰 <span class="set-note-inline">仅桌面端生效，切换后自动重建窗口</span></div>
+        <div class="opt-cards" id="decor-cards">
+          <button class="opt-card" data-opt="csd" type="button">自绘标题栏（CSD）</button>
+          <button class="opt-card" data-opt="ssd" type="button">系统标题栏（SSD）</button>
         </div>
       </div>
-      <p class="muted set-hint">输入框里填的就是 CSS font-family 列表（逗号分隔、按优先级挑第一个装得上的），改完即时生效；留空表示不覆盖，走内置默认栈。</p>
+
+      <div class="set-group">
+        <div class="set-label">关闭按钮行为 <span class="set-note-inline">点窗口右上角 ✕ 时（CSD/SSD 通用）</span></div>
+        <div class="opt-cards" id="close-cards">
+          <button class="opt-card" data-opt="tray" type="button">缩放到托盘</button>
+          <button class="opt-card" data-opt="quit" type="button">退出程序</button>
+        </div>
+        <p class="muted set-hint">缩放到托盘：窗口隐藏，播放与系统托盘图标继续，托盘菜单「退出」才结束程序。</p>
+      </div>
+
+      <div class="set-group">
+        <div class="set-label">字体设置</div>
+        <div class="set-row"><span class="set-row__label">界面字体</span>
+          <div class="set-row__ctrl font-row">
+            <select id="font-ui" aria-label="界面字体预设">${fontOptions}</select>
+            <input id="font-ui-list" type="text" spellcheck="false" autocomplete="off"
+              aria-label="界面字体 font-family 列表"
+              placeholder="留空，如 Source Han Sans, system-ui, sans-serif" />
+          </div>
+        </div>
+        <div class="set-row"><span class="set-row__label">歌词字体</span>
+          <div class="set-row__ctrl font-row">
+            <select id="font-lyric" aria-label="歌词字体预设">${fontOptions}</select>
+            <input id="font-lyric-list" type="text" spellcheck="false" autocomplete="off"
+              aria-label="歌词字体 font-family 列表" placeholder="" />
+          </div>
+        </div>
+        <p class="muted set-hint">输入框里填的就是 CSS font-family 列表（逗号分隔、按优先级挑第一个装得上的），改完即时生效；留空表示不覆盖，走内置默认栈。</p>
+      </div>
     </section>
 
-    <section class="set-sec">
-      <h2>播放设置</h2>
-      <p class="muted set-note">在这里，可以设置 Quaver 的播放设置</p>
-
-      <div class="set-sub">后端模式</div>
-      <p class="muted set-note">如果播放音频出现问题可在这设置</p>
-      <div id="backend-device"${isMac ? " hidden" : ""}>
-        <label class="set-field"><span>音频输出设备</span>
-          <select id="audio-backend" disabled><option>系统默认</option></select></label>
+    <section class="set-panel" data-panel="playback" hidden>
+      <div class="set-group" id="backend-device"${isMac ? " hidden" : ""}>
+        <div class="set-label">音频输出设备</div>
+        <div class="set-row"><span class="set-row__label">输出设备</span>
+          <div class="set-row__ctrl"><select id="audio-backend" disabled><option>系统默认</option></select></div>
+        </div>
         <p class="muted set-hint" id="audio-device-hint">MPV 引擎下可直选输出设备（PipeWire/Pulse/ALSA…），切换即时生效；浏览器后端跟随系统。</p>
       </div>
-      <div class="set-sub set-sub2">播放引擎 <span class="muted set-subnote" id="engine-note">- 默认 MPV，可选浏览器</span></div>
-      <div class="opt-radios" id="decode-radios">
-        ${decodeRow("MPV", "MPV（原生引擎）")}${decodeRow("Blink", "浏览器 &lt;audio&gt;")}
-      </div>
-      <p class="muted set-hint" id="engine-hint">MPV：主进程原生播放，带内存滑动窗口缓存与设备直选，MPRIS/媒体键体验最完整；浏览器：渲染层 &lt;audio&gt; 兜底。切换即时生效，当前曲目换轨续播。</p>
 
-      <div class="set-sub set-sub2">淡入淡出 <span class="muted set-subnote">- 仅 MPV 引擎生效</span></div>
-      <div class="opt-cards" id="fade-cards">
-        <button class="opt-card" data-opt="off" type="button">关闭</button>
-        <button class="opt-card" data-opt="short" type="button">短（0.15s）</button>
-        <button class="opt-card" data-opt="normal" type="button">标准（0.4s）</button>
-        <button class="opt-card" data-opt="long" type="button">长（0.8s）</button>
+      <div class="set-group">
+        <div class="set-label">播放引擎 <span class="set-note-inline" id="engine-note">- 默认 MPV，可选浏览器</span></div>
+        <div class="opt-radios" id="decode-radios">
+          ${decodeRow("MPV", "MPV（原生引擎）")}${decodeRow("Blink", "浏览器 &lt;audio&gt;")}
+        </div>
+        <p class="muted set-hint" id="engine-hint">MPV：主进程原生播放，带内存滑动窗口缓存与设备直选，MPRIS/媒体键体验最完整；浏览器：渲染层 &lt;audio&gt; 兜底。切换即时生效，当前曲目换轨续播。</p>
       </div>
-      <p class="muted set-hint">起播从静音升到当前音量；暂停 / 切歌 / 停止时先降下来再停（切歌时淡出与下一首的淡入自然衔接）。浏览器 &lt;audio&gt; 后端不生效。</p>
 
-      <div class="set-sub">默认音质 <span class="muted set-subnote" id="q-member-note"></span></div>
-      <div class="opt-cards" id="quality-grid">
-        <button class="opt-card q" data-q="auto" type="button">自动</button>
+      <div class="set-group">
+        <div class="set-label">淡入淡出 <span class="set-note-inline">仅 MPV 引擎生效</span></div>
+        <div class="opt-cards" id="fade-cards">
+          <button class="opt-card" data-opt="off" type="button">关闭</button>
+          <button class="opt-card" data-opt="short" type="button">短（0.15s）</button>
+          <button class="opt-card" data-opt="normal" type="button">标准（0.4s）</button>
+          <button class="opt-card" data-opt="long" type="button">长（0.8s）</button>
+        </div>
+        <p class="muted set-hint">起播从静音升到当前音量；暂停 / 切歌 / 停止时先降下来再停（切歌时淡出与下一首的淡入自然衔接）。浏览器 &lt;audio&gt; 后端不生效。</p>
       </div>
-      <div class="set-sub set-sub2">Fallback 排序 <span class="muted set-subnote">- 高档不可用时的降档顺序</span></div>
-      <div class="opt-cards" id="qfallback-cards">
-        <button class="opt-card" data-opt="no-atmos" type="button">不优先全景声</button>
-        <button class="opt-card" data-opt="rank" type="button">按标准排序</button>
+
+      <div class="set-group">
+        <div class="set-label">默认音质 <span class="set-note-inline" id="q-member-note"></span></div>
+        <div class="opt-cards" id="quality-grid">
+          <button class="opt-card q" data-q="auto" type="button">自动</button>
+        </div>
       </div>
-      <p class="muted set-hint">自动/降档时优先取到「臻品母带」，跳过「臻品全景声」（显式点选全景声不受影响）；「按标准排序」则回退链保持 rank 降序原样。</p>
-      <p class="muted set-hint">档位即时生效（下一首起按新音质协商取链）。臻品母带/全景声等高档位仅限会员；本后端只流播明文档，不提供加密档（QMC）解密。</p>
+
+      <div class="set-group">
+        <div class="set-label">Fallback 排序 <span class="set-note-inline">高档不可用时的降档顺序</span></div>
+        <div class="opt-cards" id="qfallback-cards">
+          <button class="opt-card" data-opt="no-atmos" type="button">不优先全景声</button>
+          <button class="opt-card" data-opt="rank" type="button">按标准排序</button>
+        </div>
+        <p class="muted set-hint">自动/降档时优先取到「臻品母带」，跳过「臻品全景声」（显式点选全景声不受影响）；「按标准排序」则回退链保持 rank 降序原样。</p>
+        <p class="muted set-hint">档位即时生效（下一首起按新音质协商取链）。臻品母带/全景声等高档位仅限会员；本后端只流播明文档，不提供加密档（QMC）解密。</p>
+      </div>
     </section>
 
-    <section class="set-sec">
-      <h2>配置文件</h2>
-      <p class="muted set-note">以下设置全部持久化在系统标准配置目录的 <code>quaver.conf</code>（INI）里，可以直接手改；登录凭证在同一目录，不进浏览器。</p>
-      <label class="set-field"><span>配置文件</span>
-        <input id="conf-path" readonly /></label>
-      <div class="set-debug">
-        <button class="ghost-btn" id="open-conf" type="button">在文件管理器中显示</button>
-        <button class="ghost-btn" id="reset-conf" type="button">恢复默认设置</button>
+    <section class="set-panel" data-panel="general" hidden>
+      <div class="set-group">
+        <div class="set-label">配置文件</div>
+        <p class="muted set-hint">以下设置全部持久化在系统标准配置目录的 <code>quaver.conf</code>（INI）里，可以直接手改；登录凭证在同一目录，不进浏览器。</p>
+        <div class="set-row"><span class="set-row__label">路径</span>
+          <div class="set-row__ctrl"><input id="conf-path" readonly /></div>
+        </div>
+        <div class="set-debug">
+          <button class="ghost-btn" id="open-conf" type="button">在文件管理器中显示</button>
+          <button class="ghost-btn" id="reset-conf" type="button">恢复默认设置</button>
+        </div>
+        <p class="muted set-hint" id="conf-hint"></p>
       </div>
-      <p class="muted set-hint" id="conf-hint"></p>
-    </section>
 
-    <section class="set-sec">
-      <h2>调试</h2>
-      <div class="set-debug"><button class="ghost-btn" id="open-log" type="button">打开日志页面</button></div>
-    </section>
-    <section class="set-sec">
-      <h2>关于</h2>
-      <div class="about-img"><img class="ic-dark" src="/quaver-icon-dark.svg" width=60 alt="Quaver Icon"><img class="ic-light" src="/quaver-icon.svg" width=60 alt="Quaver Icon">
-      <h3> Quaver Music </h3>
-      <h4> 又一个基于 Electron + Vite 前端 + TS/Py 混合后端的 QQ 音乐第三方客户端</h4>
-      <small> Version: ${__APP_VERSION__} </small>
-    </section>`
-    ;
+      <div class="set-group">
+        <div class="set-label">调试</div>
+        <div class="set-debug"><button class="ghost-btn" id="open-log" type="button">打开日志页面</button></div>
+      </div>
+
+      <div class="set-group set-about">
+        <div class="about-img"><img class="ic-dark" src="/quaver-icon-dark.svg" width=60 alt="Quaver Icon"><img class="ic-light" src="/quaver-icon.svg" width=60 alt="Quaver Icon">
+        <h3> Quaver Music </h3>
+        <h4> 又一个基于 Electron + Vite 前端 + TS/Py 混合后端的 QQ 音乐第三方客户端</h4>
+        <small> Version: ${__APP_VERSION__} </small>
+      </div>
+    </section>`;
 
   root.append(wrap);
+
+  // 与歌手页同一套切换动画（.set-view.tab-anim > .set-panel，见 style.css）：门闩首次点击才挂，
+  // 首屏交给 .route.entering；重复点当前标签直接返回，避免重播。
+  tabs.querySelectorAll<HTMLButtonElement>(".set-tab").forEach((t) => {
+    t.onclick = () => {
+      if (t.classList.contains("is-active")) return;
+      wrap.classList.add("tab-anim");
+      tabs.querySelectorAll(".set-tab").forEach((x) => x.classList.toggle("is-active", x === t));
+      wrap.querySelectorAll<HTMLElement>(".set-panel").forEach((p) => { p.hidden = p.dataset.panel !== t.dataset.tab; });
+    };
+  });
 
   const syncSel = (box: HTMLElement, attr: "opt" | "q", active: string) =>
     box.querySelectorAll<HTMLElement>("[data-" + attr + "]").forEach((b) => b.classList.toggle("sel", b.dataset[attr] === active));
@@ -777,6 +1112,33 @@ async function logView(root: HTMLElement) {
   await load();
 }
 
+// —— 我的页（点侧栏头像的落点；退出登录按钮长在这里）——
+//
+// 进场：整页交给 CSS 的 `.me > *` 分级淡入（style.css「我的」段），容器让位不叠动画。
+// 离场：退出登录先播 `.leaving`（整页淡出上移）再跳登录页 —— 登录态变化必须走整页
+// （location.href）才能重置侧栏与播放器，所以这里只能「先把界面收掉再跳」。
+const ME_OUT_MS = 180; // 与 .me.leaving 的动画时长对齐
+
+const reduceMotion = () =>
+  typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** 我的页离场：加 .leaving 等动画结束。动画只是观感，**绝不能挡住跳转** —— 
+ *  用户关了动效（动画被媒体查询去掉、animationend 永不触发）或事件丢失时按超时兜底。 */
+function exitMe(el: HTMLElement): Promise<void> {
+  if (reduceMotion()) return Promise.resolve();
+  return new Promise<void>((done) => {
+    let timer = 0;
+    const fin = () => { window.clearTimeout(timer); done(); };
+    el.addEventListener("animationend", fin, { once: true });
+    timer = window.setTimeout(fin, ME_OUT_MS + 120);
+    el.classList.add("leaving");
+  });
+}
+
+/** 登出请求不许拖住离场：上游不回就在 ms 后放行（凭证清理本来就允许失败） */
+const settleIn = (p: Promise<unknown>, ms: number) =>
+  Promise.race([p.catch(() => {}), new Promise((r) => setTimeout(r, ms))]);
+
 async function userView(root: HTMLElement) {
   const wrap = h("div", "me");
   root.append(wrap);
@@ -787,15 +1149,25 @@ async function userView(root: HTMLElement) {
     ]);
     const base = home?.base_info;
     if (!base?.name) { location.hash = "#/login"; return; }
+    // 会员权益卡（到期时间 + 档位明细 + 续费指路）由 lib/vip.ts 生成：字段口径与上游模型对齐，
+    // 这里只负责挂进页面。vip 为 null（上游没响应）时卡片自己说明读不到。
     wrap.innerHTML = `
       <div class="avatar-big">${base.avatar ? `<img src="${String(base.avatar).replace(/^http:/, "https:")}" alt=""/>` : ""}</div>
-      <h2 style="margin:12px 0 4px">${base.name}</h2>
+      <h2 style="margin:12px 0 4px">${escHtml(base.name)}</h2>
       <div class="badges" style="justify-content:center">${identityBadges(home, vip)}</div>
-      <p class="muted">UID: ${base.encrypted_uin ?? ""}</p>
+      <p class="muted">UID: ${escHtml(base.encrypted_uin ?? "")}</p>
+      ${vipCardHtml(vip)}
       <button id="logout" class="ghost-btn danger">退出登录</button>`;
-    wrap.querySelector<HTMLElement>("#logout")!.onclick = async () => {
-      await api("/login/logout", { method: "POST" }).catch(() => {});
-      location.href = "/login.html"; // 登录态变化走整页，重置侧栏
+    const btn = wrap.querySelector<HTMLButtonElement>("#logout")!;
+    let leaving = false;
+    btn.onclick = async () => {
+      if (leaving) return; // 连点：只开一趟登出
+      leaving = true;
+      btn.disabled = true;
+      btn.textContent = "正在退出…";
+      // 离场动画与登出请求并行：动画短、请求可能慢，两个都不许把跳转卡住
+      await Promise.all([exitMe(wrap), settleIn(api("/login/logout", { method: "POST" }), 1500)]);
+      location.href = "/login.html";
     };
   } catch {
     location.hash = "#/login";
@@ -808,22 +1180,25 @@ async function loginView(root: HTMLElement) {
     <div class="login-wrap">
       <h2>扫码登录</h2>
       <p class="muted">用手机 QQ 音乐 App 或微信扫码。凭证由本机 sidecar 保存于系统配置目录的 credential.json（0600，Linux 在 ~/.config/quaver-music），不进浏览器。</p>
+      <!-- 登录方式用标签区分（不是下拉）：复用搜索页/歌手页那套 .tag 组件，三档一眼看全，
+           data-ch 的取值必须与 sidecar 的 QR_TYPES（qq/wx/mobile）对齐，写错是 422 不是静默失败 -->
+      <div class="tag-tabs" id="channel" role="tablist" aria-label="登录方式">
+        <button class="tag sel" type="button" role="tab" aria-selected="true" data-ch="mobile">QQ 音乐 App</button>
+        <button class="tag" type="button" role="tab" aria-selected="false" data-ch="qq">手机 QQ</button>
+        <button class="tag" type="button" role="tab" aria-selected="false" data-ch="wx">微信</button>
+      </div>
       <div class="qr-box">
         <div id="qr" class="qr"><div class="muted">正在生成二维码…</div></div>
         <div id="lstate" class="muted"></div>
         <div class="row-btn">
-          <select id="channel" aria-label="登录通道">
-            <option value="mobile">QQ 音乐 App</option>
-            <option value="qq">手机 QQ</option>
-            <option value="wx">微信</option>
-          </select>
           <button id="refresh" type="button">重新生成</button>
         </div>
       </div>
     </div>`;
   const qr = root.querySelector<HTMLElement>("#qr")!;
   const lstate = root.querySelector<HTMLElement>("#lstate")!;
-  const channel = root.querySelector("#channel") as HTMLSelectElement;
+  const tabs = [...root.querySelectorAll<HTMLButtonElement>("#channel .tag")];
+  let channel = tabs[0]?.dataset.ch ?? "mobile";
   let timer: number | undefined;
   let stopped = false;
 
@@ -833,7 +1208,7 @@ async function loginView(root: HTMLElement) {
     lstate.textContent = "";
     let d: any;
     try {
-      d = await api<any>(`/login/qrcode/${channel.value}`);
+      d = await api<any>(`/login/qrcode/${channel}`);
     } catch (e: any) {
       qr.innerHTML = `<div class="muted">${/429|backoff|频繁/.test(e.message) ? "操作太快，等 60-90s 再重试" : e.message}</div>`;
       return;
@@ -845,7 +1220,7 @@ async function loginView(root: HTMLElement) {
     timer = window.setInterval(async () => {
       if (stopped) { window.clearInterval(timer); return; }
       try {
-        const c: any = await api(`/login/qrcode/${channel.value}/status?identifier=${encodeURIComponent(d.identifier)}`);
+        const c: any = await api(`/login/qrcode/${channel}/status?identifier=${encodeURIComponent(d.identifier)}`);
         if (c.event === 1) return; // SCAN
         if (c.event === 2) { lstate.textContent = "已扫码，请在手机上确认"; return; }
         if (c.event === 3) { lstate.textContent = "二维码已过期，点「重新生成」"; window.clearInterval(timer); return; }
@@ -859,9 +1234,22 @@ async function loginView(root: HTMLElement) {
     }, 2000);
   }
 
-  root.querySelector<HTMLElement>("#refresh")!.onclick = start;
-  channel.onchange = start;
-  start();
+  // 换标签 = 换通道：立刻重开一张二维码（旧轮询在 start 里 clearInterval 掉，不会串台）
+  for (const b of tabs) {
+    b.addEventListener("click", () => {
+      const ch = b.dataset.ch!;
+      if (ch === channel) return; // 重复点当前档不重开
+      channel = ch;
+      for (const x of tabs) {
+        const on = x === b;
+        x.classList.toggle("sel", on);
+        x.setAttribute("aria-selected", String(on));
+      }
+      void start();
+    });
+  }
+  root.querySelector<HTMLElement>("#refresh")!.onclick = () => void start();
+  void start();
 
   return () => { stopped = true; window.clearInterval(timer); };
 }
@@ -928,7 +1316,8 @@ async function searchView(root: HTMLElement, q: URLSearchParams) {
         for (const g of s.singer ?? []) g.name = noEm(g.name);
         if (s.album) s.album.name = noEm(s.album.name);
       }
-      renderSongRows(box, list, { showAlbum: true, onPlay: (s, i, all) => player.playList(all, i) });
+      // 双击 = 插队播放：排到当前曲之后等着播（不清空、也不打断正在放的列表）
+      renderSongRows(box, list, { showAlbum: true, onPlay: (s) => enqueueNextWithToast(s) });
     } else if (tab.type === "1") {
       box.classList.add("grid");
       box.innerHTML = list.map((x) => `<a class="card" href="#/singer?mid=${encodeURIComponent(x.mid ?? "")}&name=${encodeURIComponent(noEm(x.name) || "歌手")}">

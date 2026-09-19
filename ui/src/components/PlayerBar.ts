@@ -4,7 +4,7 @@
 // 进度：整个 Bar 按下去即可拖拽 seek（拖中圆点/时间跟手，松手才真正提交），顶边细线只是视觉指示
 // 音量：浮窗形式 —— 悬停/点击静音按钮弹出玻璃小窗，静音图标 + 滑杆 + 读数一体
 import { player } from "../player";
-import { coverUrl, getLastStream, getStreamTiers, getSessionQuality, effectiveQuality, QUALITY_SHORT, QUALITIES, type Quality } from "../lib/api";
+import { coverUrl, getLastStream, getStreamTiers, getSessionQuality, effectiveQuality, QUALITY_SHORT, QUALITIES, songTitle, type Quality } from "../lib/api";
 // getLastStream 仍由 paintQ 使用（胶囊显示实际已应用档位）
 import { fmtDur } from "../lyric";
 import { icons } from "../lib/icons";
@@ -222,7 +222,7 @@ export function PlayerBar(): HTMLElement {
   // 订阅状态
   player.on(() => {
     const s = player.current;
-    title.textContent = s?.name ?? "未在播放";
+    title.textContent = s ? songTitle(s) : "未在播放";
     // 实际档位不在这里展示：播放条右侧的可选音质胶囊（paintQ）已承载「已应用档位」信息
     sub.innerHTML = s
       ? (s.singer ?? []).map((x) => x.name).join(" / ")
@@ -246,6 +246,11 @@ export function PlayerBar(): HTMLElement {
     paintQ();
     loop.innerHTML = player.mode === "off" ? icons.loopOff : player.mode === "all" ? icons.loopAll : icons.loopOne;
     loop.classList.toggle("on", player.mode !== "off");
+    // 「列表循环」与「单曲循环」的图形只差一个 9px 的「1」，光看图标分不出来 —— 把模式名挂到
+    // title / aria-label 上，悬停与读屏都能确认当前处于哪一档（顺序 → 列表 → 单曲 三态轮转）。
+    const loopName = player.mode === "off" ? "顺序播放" : player.mode === "all" ? "列表循环" : "单曲循环";
+    loop.title = `${loopName}（点击切换）`;
+    loop.setAttribute("aria-label", `循环模式：${loopName}`);
     love.innerHTML = s && player.loved.has(s.mid) ? icons.heartFill : icons.heart;
     love.classList.toggle("on", !!s && player.loved.has(s.mid));
     if (!dragging) {

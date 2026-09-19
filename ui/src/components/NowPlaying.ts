@@ -5,7 +5,7 @@
 // 右侧 = 封面在上，歌名 / 「歌手 - 专辑」在下，文本右对齐且与封面右缘齐平。
 // 背景 = 当前封面高斯模糊放大铺满 + 深色渐变压暗；进度与控制由常驻播放条承担。
 import { player, type Song } from "../player";
-import { coverUrl } from "../lib/api";
+import { coverUrl, songTitle } from "../lib/api";
 import { icons } from "../lib/icons";
 
 export function NowPlaying(): HTMLElement {
@@ -109,7 +109,11 @@ export function NowPlaying(): HTMLElement {
     const open = player.expanded;
     el.classList.toggle("open", open);
     el.classList.toggle("no-trans", !player.showTrans);
-    $("np-trans").classList.toggle("on", player.showTrans);
+    const transBtn = $("np-trans");
+    transBtn.classList.toggle("on", player.showTrans);
+    transBtn.setAttribute("aria-pressed", String(!!player.showTrans));
+    // 开关两态差别不能只落在配色上：把当前态写进 title，鼠标悬停即可确认，不必靠眼睛分辨底色
+    transBtn.title = player.showTrans ? "翻译：显示中（点击隐藏）" : "翻译：已隐藏（点击显示）";
     if (!open && !s) return;
 
     // 背景：封面模糊放大
@@ -121,7 +125,7 @@ export function NowPlaying(): HTMLElement {
     const st: "idle" | "loading" | "ok" | "none" = player.lyrics.length ? "ok" : player.lyricState;
     if (s?.mid !== lastMid || st !== lastLyricState) buildLyricDom(s);
     lastLyricState = st;
-    setTitle(s?.name ?? "未在播放");
+    setTitle(s ? songTitle(s) : "未在播放");
     const albumName = (s as any)?.album?.name ?? "";
     setArtist(s ? [(s.singer ?? []).map((x) => x.name).join(" / "), albumName].filter(Boolean).join(" - ") : "");
     cover.innerHTML = pic ? `<img src="${pic}" alt=""/>` : `<div class="np-cover-ph">${icons.disc ?? ""}</div>`;

@@ -92,6 +92,20 @@ button { font: inherit; }
   background: var(--glass); border: 1px solid var(--glass-line);
   box-shadow: 0 8px 32px rgba(15,20,30,.10);
   backdrop-filter: blur(26px) saturate(1.5); -webkit-backdrop-filter: blur(26px) saturate(1.5);
+  /* 缩回/展开只动 flex-basis 与水平内距（216↔64px，见文件下方 body.side-collapsed 段）：
+     条目本身不改结构，只让各自的文字（max-width→0 + 淡出）与 gap 收干净。过渡声明在下一段。 */
+}
+/* 随缩回一起动的成员，统一过渡声明放这里（逐条写会出现漏项）：
+   容器类走同一条曲线（与全站动效一致），文字类用更短的不透明度过渡 ——
+   先淡出、后收窄，中途不会看到被裁了一半的汉字。
+   注意 .nav a / .pl 不在此列：它们各自已有声明（背景/按压缩放），transition 是整体覆盖属性，
+   列在这里会被后面那条规则顶掉，得并进它们自己的声明里去。 */
+.sidebar, .user, .user-meta, .avatar, .nav a span, .pname, .side-foot {
+  transition:
+    flex-basis .24s cubic-bezier(.22,.61,.36,1), padding .24s cubic-bezier(.22,.61,.36,1),
+    gap .24s cubic-bezier(.22,.61,.36,1), max-width .24s cubic-bezier(.22,.61,.36,1),
+    width .24s cubic-bezier(.22,.61,.36,1), height .24s cubic-bezier(.22,.61,.36,1),
+    opacity .12s cubic-bezier(.22,.61,.36,1);
 }
 .user { display: flex; gap: 10px; align-items: center; padding: 2px 6px; border-radius: 10px; }
 .user:hover { background: var(--hover); }
@@ -101,7 +115,8 @@ button { font: inherit; }
   box-shadow: 0 2px 6px #00000022;
 }
 .avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
-.user-meta { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+/* max-width 是缩态收字用的抓手：必须有初值（none→0 不参与插值），且比内容宽才不截展开态 */
+.user-meta { min-width: 0; max-width: 160px; overflow: hidden; display: flex; flex-direction: column; gap: 3px; }
 .nick { font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badges { display: flex; gap: 4px; flex-wrap: wrap; }
 .badge { font-style: normal; font-size: 10px; line-height: 16px; padding: 0 5px; border-radius: 4px; color: #fff; }
@@ -111,8 +126,13 @@ button { font: inherit; }
 .nav a {
   position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 9px;
   color: var(--ink3); font-weight: 500;
-  transition: background .14s, transform .1s ease;
+  /* gap/padding 是缩态收字的一部分（见 body.side-collapsed 段），必须并进这条声明 */
+  transition: background .14s, transform .1s ease,
+    gap .24s cubic-bezier(.22,.61,.36,1), padding .24s cubic-bezier(.22,.61,.36,1);
 }
+/* 导航文字：缩态靠 max-width→0 收掉（配 .sidebar 的 overflow:hidden）。
+   140px 足够「每日 30 首」，展开态不受限。 */
+.nav a span { max-width: 140px; overflow: hidden; white-space: nowrap; }
 /* 激活态左侧强调条：从封面主色染色（--cvg-accent），激活时纵向滑入（scaleY 0→1），
    切换导航时新旧条交接有动效。无封面染色（未播放）时回落 --acc 保持视觉一致。 */
 .nav a::before {
@@ -128,12 +148,15 @@ button { font: inherit; }
 .sep { border: 0; border-top: 1px dashed var(--sep); margin: 4px 6px; }
 
 .playlists { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; margin: 0 -4px; padding: 0 4px; }
-.pl { display: flex; gap: 9px; align-items: center; padding: 6px 7px; border-radius: 8px; min-height: 44px; transition: background .14s, transform .1s ease; }
+.pl { display: flex; gap: 9px; align-items: center; padding: 6px 7px; border-radius: 8px; min-height: 44px;
+  transition: background .14s, transform .1s ease,
+    gap .24s cubic-bezier(.22,.61,.36,1), padding .24s cubic-bezier(.22,.61,.36,1); }
 .pl:hover { background: var(--hover); }
 .pl:active { transform: scale(.97); }
 .pl .thumb { width: 32px; height: 32px; flex: 0 0 auto; border-radius: 6px; background: var(--ph2); overflow: hidden; }
 .pl .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.pname { min-width: 0; display: flex; flex-direction: column; gap: 1px; font-size: 13px; color: var(--ink3); }
+/* 歌单名同理走 max-width（初值 200px 比展开态的可用宽大，不会截内容） */
+.pname { min-width: 0; max-width: 200px; overflow: hidden; display: flex; flex-direction: column; gap: 1px; font-size: 13px; color: var(--ink3); }
 .pl .ptitle, .pl .psub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl .psub { font-size: 11px; color: var(--idx); }
 .pl-empty { color: var(--idx); font-size: 12px; padding: 8px; }
@@ -143,8 +166,45 @@ button { font: inherit; }
 .pl-group:first-child { padding-top: 2px; }
 .pl-cnt { font-weight: 500; }
 
-.settings { margin-top: auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 9px; color: var(--ink3); }
-.settings:hover { background: var(--hover); }
+/* 侧栏底部按钮排（设置齿轮 + 缩回/展开）：margin-top:auto 把它顶到侧栏最底 */
+.side-foot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.side-btn {
+  width: 36px; height: 36px; flex: 0 0 auto; display: grid; place-items: center; padding: 0;
+  border: 0; border-radius: 9px; background: transparent; color: var(--ink3); cursor: pointer;
+  transition: background .14s, transform .1s ease;
+}
+.side-btn:hover { background: var(--hover); }
+.side-btn:active { transform: scale(.94); }
+/* 缩回/展开图标：展开态指左（=收回去），缩态由下面的规则翻 180° 指右（=放出来） */
+.side-btn svg { transition: transform .24s cubic-bezier(.22,.61,.36,1); }
+
+/* —— 侧栏缩回（body.side-collapsed）：216px → 64px ——
+   缩态只保留头像、导航图标、歌单封面（.thumb）与底部两颗按钮：昵称/徽章/导航文字/歌单名
+   一律 max-width→0 收掉，分组标题退化成一条虚线分隔，条目与按钮改居中排布。
+   状态由 prefs.applySidebar 挂到 body 上（与 applyDecor 的 body.ssd 同一套路），
+   这里只描述外观，不再由模块互相找节点。 */
+body.side-collapsed .sidebar { flex-basis: 64px; padding: 14px 8px; }
+body.side-collapsed .user { justify-content: center; padding: 2px 0; gap: 0; }
+body.side-collapsed .avatar { width: 38px; height: 38px; }
+body.side-collapsed .user-meta,
+body.side-collapsed .nav a span,
+body.side-collapsed .pname { max-width: 0; opacity: 0; }
+body.side-collapsed .nav a { justify-content: center; padding: 8px 0; gap: 0; }
+body.side-collapsed .pl { justify-content: center; padding: 6px 0; gap: 0; }
+body.side-collapsed .sep { margin: 4px 12px; }
+/* 分组标题：文字收成 0 高度，只留一条居中的虚线区分「我创建的 / 收藏的」两团。
+   第一团不画 —— 它上方紧挨着的 .sep 已经是导航与歌单区的分界，两条虚线会叠在一起
+   （只有「收藏的歌单」一团时同理：它同样是 .playlists 的第一子元素，那条分界仍在）。 */
+body.side-collapsed .pl-group { height: 0; padding: 0; margin: 6px 10px; overflow: hidden; border-top: 1px dashed var(--sep); }
+body.side-collapsed .pl-group:first-child { margin-top: 0; border-top: 0; }
+body.side-collapsed .pl-group > * { display: none; }
+/* 空态文案（未登录 / 暂无歌单）在 48px 里排不下：整行隐去，不给半截字 */
+body.side-collapsed .pl-empty { padding: 10px 0; font-size: 0; text-align: center; overflow: hidden; }
+/* 缩态滚动条一并收细：10px 的槽在 64px 宽的栏里太占地方 */
+body.side-collapsed .playlists::-webkit-scrollbar { width: 6px; }
+body.side-collapsed .playlists::-webkit-scrollbar-thumb { border-width: 2px; }
+body.side-collapsed .side-foot { flex-direction: column; justify-content: center; gap: 2px; }
+body.side-collapsed .side-btn svg { transform: rotate(180deg); }
 
 .content { flex: 1; border-radius: 14px; overflow: hidden; padding: 0; min-width: 0; min-height: 0; position: relative;
   display: flex; flex-direction: column;
@@ -199,7 +259,9 @@ body:not(.ssd) .content-top::before, body:not(.ssd) .content-top::after { flex-b
    在 .route 上，renderRoute 重建子元素时新挂载的节点立即匹配此选择器、从 from 态开始播放
    （无闪烁，不会先 paint 出 1 再跳回 0）。前 3 个直接子元素轻微 stagger（信息头/标题/列表容器），
    第 4 个起统一 delay，长列表不会拖太久。容器 .route 不参与动画 → 搜索栏/侧栏等常驻部分不动。 */
-.route.entering > * { animation: route-in .26s cubic-bezier(.22,.61,.36,1) both; }
+/* .me（我的页）例外：它自带子元素分级入场（见文件下方「我的」段），不走这条整块动画 ——
+   两层同时淡入会把观感拖糊，也让离场动画要跟这条规则抢 animation 权重。 */
+.route.entering > *:not(.me) { animation: route-in .26s cubic-bezier(.22,.61,.36,1) both; }
 .route.entering > *:nth-child(2) { animation-delay: .04s; }
 .route.entering > *:nth-child(3) { animation-delay: .08s; }
 .route.entering > *:nth-child(n+4) { animation-delay: .12s; }
@@ -277,6 +339,22 @@ body:not(.ssd) .content-top::before, body:not(.ssd) .content-top::after { flex-b
 .stab.sel, .tag.sel { background: var(--cvg-accent, var(--acc)); border-color: var(--cvg-accent, var(--acc)); color: #fff; font-weight: 600; }
 /* 面板组：三块常驻 DOM，只切 hidden（切换标签不重排、不重拉数据） */
 .tag-body > .tag-panel[hidden] { display: none; }
+
+/* —— 标签页切换动画：歌手页 .tag-panel 与设置页 .set-panel 共用 ——
+   面板是常驻 DOM，靠 hidden 切显隐；元素离开 display:none 回到渲染树时动画会从 0 重播，
+   所以 :not([hidden]) 本身即「每次切换播一次」的触发器，不必在 JS 里重挂节点
+   （重挂会丢滚动位置、丢已绑事件、还要重跑 renderSongRows）。
+   门闩 .tab-anim 由视图在首次点击时补上：首屏入场交给 .route.entering 的统一动画，
+   两层同时淡入会把观感拖糊；门闩与 hidden 的改动落在同一帧，旧面板随即 display:none，
+   不会连带把当前面板也重播一遍。 */
+@keyframes tab-panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.tab-anim > .tag-panel:not([hidden]),
+.set-view.tab-anim > .set-panel:not([hidden]) {
+  animation: tab-panel-in .24s cubic-bezier(.22,.61,.36,1) both;
+}
 .hot-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
   padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line);
@@ -307,6 +385,40 @@ body:not(.ssd) .content-top::before, body:not(.ssd) .content-top::after { flex-b
 .pl-expand:hover { border-color: var(--cvg-accent, var(--acc)); color: var(--cvg-accent, var(--acc)); }
 /* 信息头行动区（歌单页收藏按钮）；自有歌单/未登录不渲染该行 */
 .pl-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+/* —— 猜你喜欢的「换一批」：页头下方、右侧对齐（与列表工具条同一版式语言）——
+   次级按钮走 .ghost-btn--quiet（透明底 + 发丝线），不抢标题的视觉重量；
+   取歌中禁用并改文案（单批 ~3-6s，不给反馈会以为点了没反应）。 */
+.guess-bar { display: flex; justify-content: flex-end; margin: 0 0 14px; }
+.guess-bar .ghost-btn { padding: 6px 14px; font-size: 12.5px; }
+
+/* —— 歌曲列表工具条（歌单页 / 我喜欢共用；组件见 components/ListTools.ts）：本地搜索 + 排序 ——
+   两者都只在本地已拉的列表上生效（不回源）：排序要的「加入时间 / 收藏顺序」就是服务端原序，
+   再去问一次上游只会把原序弄丢。搜索框复用顶带的 .sb-field 胶囊（同一套聚焦环/尺寸），这里只给宽度。
+   版式：**控件靠右**，命中计数在左 —— 中间空档由计数的 auto margin 吃掉，
+   所以计数为空（没在筛选）时搜索与排序照样贴在右缘。 */
+.list-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; margin: 0 0 14px; }
+.list-tools .lt-search { flex: 0 1 auto; width: clamp(180px, 26vw, 280px); }
+.lt-count { margin-right: auto; font-size: 12px; color: var(--idx); font-variant-numeric: tabular-nums; }
+.lt-clr { border: 0; background: transparent; color: var(--idx); cursor: pointer; font-size: 12px; line-height: 1; padding: 0 1px; }
+.lt-clr:hover { color: var(--ink); }
+.lt-sort { display: flex; align-items: center; gap: 6px; }
+.lt-sg {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line);
+  background: transparent; color: var(--ink2); font-size: 12.5px; cursor: pointer;
+}
+.lt-sg:hover { background: var(--hover); color: var(--ink); }
+/* 选中态 = 软洗底 + accent 系前景 + accent 描边（既有「次级开关 / 选中」口径，
+   与 .qp-item.cur / .opt-card.sel 同一套；不铺实心 accent —— 白字压裸 accent 在亮色相封面下会塌）。
+   前景只把**亮度**锚到 --ink，accent 只贡献色相；上限由 verify-highlight-contrast.mjs 解出。 */
+.lt-sg.on {
+  background: color-mix(in srgb, var(--cvg-glow, var(--acc)) 14%, transparent);
+  border-color: color-mix(in srgb, var(--cvg-accent, var(--acc)) 55%, var(--line));
+  color: color-mix(in srgb, var(--cvg-accent, var(--acc)) 26%, var(--ink));
+  font-weight: 600;
+}
+.lt-sg .dir { font-size: 10px; opacity: .85; }
 .fav-btn {
   display: inline-flex; align-items: center; gap: 6px; padding: 7px 16px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--card); color: var(--ink);
@@ -353,6 +465,8 @@ html:not([data-theme="dark"]) .fav-btn.failed { background: #fdecec; border-colo
 .row .rthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .row .rmeta { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
 .row .rt { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 标题行次级文本：歌曲副标题（「《小时代》电影主题曲」这类一句话说明），与标题同排更浅 */
+.row .rt-sub { margin-left: 6px; font-size: 11.5px; color: var(--idx); }
 .row .ra, .row .ral { color: var(--ink2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .ral { font-size: 11.5px; opacity: .85; }
 .row .meta-link { border-radius: 4px; padding: 0 2px; margin: 0 -2px; text-decoration: underline; text-decoration-color: #0000; text-underline-offset: 2px; }
@@ -426,10 +540,19 @@ html:not([data-theme="dark"]) .fav-btn.failed { background: #fdecec; border-colo
   border: 1px solid var(--glass-line); background: var(--ph2); color: var(--ink2);
   height: 24px; min-width: 44px; padding: 0 8px; border-radius: 999px; cursor: pointer;
   font-size: 11px; font-weight: 600; letter-spacing: .2px; margin: 0 4px;
-  white-space: nowrap; transition: color .12s, border-color .12s;
+  white-space: nowrap; transition: color .12s, border-color .12s, background .12s;
 }
 .pb-q:hover { color: var(--ink); border-color: var(--ink3); }
-.pb-q.active { color: var(--cvg-accent, var(--cyan)); border-color: color-mix(in srgb, var(--cvg-accent, var(--cyan)) 40%, transparent); }
+/* 激活态：胶囊的底保持 --ph2 不动（控制条上唯一带底的元素就是它，换底色＝改这一排的语言），
+   只在原写法的基础上改两处：文字颜色的亮度锚到 --ink，描边从 40% 提到实心。
+   原写法是「accent 文字 + 40% accent 描边」，方向没错，问题同样是裸 accent 的亮度会漂 ——
+   黄系封面下文字与 #d5d5d7 只有 1.36:1，描边也只有 1.36:1，整块等于没有高亮。
+   锚定后文字最坏 5.05:1（11px 小字门槛 4.5；脚本解出的上限是 accent 占比 0.26）；
+   描边做实心 accent（对齐 .set-view .opt-card.sel 的写法），ΔE 对胶囊底 39 起。 */
+.pb-q.active {
+  color: color-mix(in srgb, var(--cvg-accent, var(--cyan)) 26%, var(--ink));
+  border-color: var(--cvg-accent, var(--cyan));
+}
 .pb-q:disabled { opacity: .5; cursor: default; }
 /* 音质浮窗：玻璃底小菜单，锚在音质按钮上方（右侧对齐，同音量浮窗） */
 .pb-qpop {
@@ -466,7 +589,15 @@ html:not([data-theme="dark"]) .fav-btn.failed { background: #fdecec; border-colo
 .pb-play:hover { opacity: .85; }
 .pb-right { display: flex; align-items: center; gap: 2px; }
 .pb-time { font-size: 11px; color: var(--ink2); margin-right: 6px; font-variant-numeric: tabular-nums; }
-.pb-ghost.on { color: var(--cvg-accent, var(--cyan)); }
+/* 激活态：只改前景色，不加底片、不加描边 —— 控制条这一排是「裸图标 + 一个实心主按钮
+   （.pb-play）」，旁边还站着从不带底的静音/队列；给次级按钮补底片就等于把这一排的语言
+   改成 chip 组，和其余控件对不上。
+   原写法本来就只换色，缺陷在色本身：--cvg-accent 由封面染色产生，是 HSL 固定 L=0.5 的色，
+   sRGB 亮度随色相从 0.05(蓝) 漂到 0.93(黄)，裸用会跟条底撞亮度（实测最坏 1.02:1，等于隐形）。
+   所以只做一件事：把前景的亮度锚到 --ink，accent 仍贡献色相。
+   accent 占比 0.48 是脚本解出的上限（图标门槛 3:1），取满以尽量多留封面色。 */
+.pb-ghost.on { color: color-mix(in srgb, var(--cvg-accent, var(--cyan)) 48%, var(--ink)); }
+/* 红心是固定色，与封面无关、对比度本就够（浅 3.35:1 / 深 4.4:1），保持原样不动 */
 .pb-ghost#pb-love.on { color: #e8465a; }
 /* 音量浮窗：挂在 Bar 上方右侧，玻璃底；静音钮 + 滑杆 + 读数一体 */
 .pb-volpop {
@@ -518,19 +649,34 @@ html:not([data-theme="dark"]) .fav-btn.failed { background: #fdecec; border-colo
 }
 /* 压暗但保留封面氛围色：底层已铺满模糊封面，这里只做轻度对比遮罩 */
 .np-scrim { position: absolute; inset: 0; background: linear-gradient(180deg, #0c0f1859, #0b0e1973 55%, #0b0e198c); }
-/* 翻译开关：从右上角移到右侧「歌名 / 歌手 - 专辑」下方，做成小胶囊（np-meta 右对齐列内第三个孩子） */
+/* 翻译开关：从右上角移到右侧「歌名 / 歌手 - 专辑」下方，做成小胶囊（np-meta 右对齐列内第三个孩子）。
+   开/关必须一眼分得开，但本页底色是「模糊封面 + 深色遮罩」——底色随曲目变，状态就绝不能只靠换色：
+   --cvg-accent 与封面同源，撞色时高亮等于隐形。故改走「形状 + 实心度」双信号：
+   关＝12% 白纱底 + 空心圈 + 浅字；开＝亮实心底 + 实心点 + 深字（底色与字色一起翻转）。 */
 .np-trans {
   align-self: flex-end; margin-top: 10px; border: 0; border-radius: 999px;
   padding: 4px 12px; background: #ffffff1f; color: #fffb; display: inline-flex; align-items: center; gap: 5px;
   cursor: pointer; font-size: 12px; font-weight: 700; letter-spacing: .5px; transition: background .12s, color .3s ease;
 }
 .np-trans:hover { background: #ffffff2e; color: #fff; }
-/* 翻译开关激活态：封面染色，深底上保可读 → accent 混 18% 白提亮，背景 glow 半透明 */
+/* 激活态：底是「accent 掺白纱」，与关态 #ffffff1f 同一语言（半透明纱），只是更强更带封面色。
+   这里必须偏离 --ink 锚定 —— 本页底色恒为深色遮罩（与明暗主题无关），
+   浅色主题下 --ink 是深色，字会跟底一起沉下去。改为锚固定亮底：
+   洗底掺白纱（#ffffffcc）保证底色永远被提亮，字取遮罩底色 #0b0e19 永远近黑压得住。
+   关/开两态的差别有三重：纱底强度与色调、字色由浅翻深、状态点由空心变实心。
+   不加描边 —— 实测那圈 1.5px accent 描边对轮廓的贡献还不如洗底自己（单看最坏 ΔE 11.6 vs 18.9），
+   属于多出来的元件，删掉。 */
 .np-trans.on {
-  color: color-mix(in srgb, var(--cvg-accent, var(--cyan)) 82%, #fff);
-  background: color-mix(in srgb, var(--cvg-glow, var(--cyan)) 22%, transparent);
+  color: #0b0e19;
+  background: color-mix(in srgb, var(--cvg-accent, var(--cyan)) 30%, #ffffffcc);
 }
-.np-trans::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .9; }
+.np-trans.on:hover { background: color-mix(in srgb, var(--cvg-accent, var(--cyan)) 38%, #ffffffcc); }
+/* 状态点：空心＝关、实心＝开。形状本身就是信号，不依赖颜色对比 */
+.np-trans::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; flex: none;
+  border: 1.5px solid currentColor; background: transparent;
+}
+.np-trans.on::before { background: currentColor; }
 .np-inner {
   position: relative; z-index: 1; width: min(1060px, 92%); height: min(560px, calc(100vh - 150px));
   display: grid; grid-template-columns: 1.15fr 1fr; gap: 48px; align-items: center;
@@ -660,15 +806,60 @@ html:not([data-theme="dark"]) .fav-btn.failed { background: #fdecec; border-colo
 
 /* ===================== 登录页 ===================== */
 .login-wrap { max-width: 460px; margin: calc(4vh + 26px) auto 0; text-align: center; }
+/* 登录方式 = 一排标签（.tag/.tag-tabs，与搜索页分类、歌手页标签同一组件），整体居中。
+   原来是 <select> 下拉：三档要展开才知道有啥，且样式与全站标签语言不一致。
+   选中态不复用 .tag.sel 的「白字 + 裸 accent 实心」——登录页是关卡，白字压 accent 在浅色 accent
+   （暗色主题的 --acc 就是浅绿）或亮色相封面染色下只有 ~1-2:1。按本仓库「次级开关/选中」口径收敛：
+   软洗底 + accent 系前景（亮度锚回 --ink）+ accent 描边，与 .lt-sg.on / .qp-item.cur 同一套。 */
+.login-wrap .tag-tabs { justify-content: center; margin: 20px 0 0; }
+.login-wrap .tag.sel {
+  background: color-mix(in srgb, var(--cvg-glow, var(--acc)) 14%, transparent);
+  border-color: color-mix(in srgb, var(--cvg-accent, var(--acc)) 55%, var(--line));
+  color: color-mix(in srgb, var(--cvg-accent, var(--acc)) 26%, var(--ink));
+  font-weight: 600;
+}
 .qr-box { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-top: 18px; }
 .qr { width: 220px; height: 220px; border-radius: 12px; background: var(--ph); display: grid; place-items: center; overflow: hidden; }
 .qr img { width: 100%; height: 100%; object-fit: contain; }
 .row-btn { display: flex; gap: 8px; }
-.row-btn select, .row-btn button { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); cursor: pointer; }
+.row-btn button { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); cursor: pointer; }
 .row-btn button:hover { background: var(--hover); }
 
 /* ===================== 我的 ===================== */
 .me { text-align: center; padding-top: 4vh; display: flex; flex-direction: column; align-items: center; }
+/* —— 进场：分级淡入（容器让位，不走 .route.entering 的整块动画）——
+   头像 → 昵称 → 徽章 → UID → 会员权益卡 → 退出登录，一路 opacity + translateY 微位移，
+   与全站同一套缓动（cubic-bezier(.22,.61,.36,1)）与短时长；头像多一点点 scale 收束
+   （.94→1，与队列面板 scale(.9) 同一语言），是这一串里唯一带「弹」的节拍。
+   节点由 userView 一次 innerHTML 挂上，animation 随挂载即播（不需要 JS 手动加类）。 */
+.me > * { animation: me-in .3s cubic-bezier(.22,.61,.36,1) both; }
+.me > *:nth-child(2) { animation-delay: .05s; }
+.me > *:nth-child(3) { animation-delay: .09s; }
+.me > *:nth-child(4) { animation-delay: .13s; }
+.me > *:nth-child(n+5) { animation-delay: .17s; }
+.me > .avatar-big { animation-name: me-pop; animation-duration: .36s; }
+@keyframes me-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes me-pop {
+  from { opacity: 0; transform: translateY(8px) scale(.94); }
+  to   { opacity: 1; transform: none; }
+}
+/* —— 离场：退出登录先整页淡出上移一点点，再跳登录页（views.ts:exitMe）——
+   登录态变化必须走整页跳转才能重置侧栏，所以只能「先把界面收掉」；pointer-events:none
+   顺带把连点挡在按钮之外（JS 里也有 leaving 闸门）。 */
+.me.leaving { animation: me-out .18s cubic-bezier(.22,.61,.36,1) both; pointer-events: none; }
+@keyframes me-out {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateY(-6px); }
+}
+/* 系统「减弱动效」：进出场都不播（views.ts 的离场有超时兜底，跳转照走） */
+@media (prefers-reduced-motion: reduce) {
+  .me > *, .me.leaving { animation: none; }
+  /* 侧栏缩回/展开：直接跳到终态（收字与位移都不做过渡） */
+  .sidebar, .user, .user-meta, .avatar, .nav a, .nav a span, .pl, .pname, .side-foot, .side-btn, .side-btn svg { transition: none; }
+}
 .avatar-big { width: 96px; height: 96px; border-radius: 50%; background: var(--ph); overflow: hidden; }
 .avatar-big img { width: 100%; height: 100%; object-fit: cover; }
 .ghost-btn { padding: 8px 18px; border-radius: 9px; border: 1px solid var(--line); background: var(--card); cursor: pointer; }
@@ -679,15 +870,45 @@ html:not([data-theme="dark"]) .ghost-btn.danger:hover { background: #fdecec; bor
 .ghost-btn:disabled { opacity: .5; cursor: not-allowed; }
 .ghost-btn:disabled:hover { border-color: var(--line); }
 
+/* —— 会员权益卡（/user 页；数据口径见 lib/vip.ts）——
+   到期时间是这张卡的主角（.vip-until），下面每行一个档位（绿钻/豪华绿钻/八平台…），
+   已过期的行列用同一套危险色标出来（浅色 #c62828 / 深色 #e66，与退出登录按钮的 danger 一致）。
+   续费只留一句指路 .vip-note（指向 QQ 音乐官方客户端）—— 本客户端不做内购入口，
+   上游给的 purchase_url/buy_url 一律不渲染。 */
+.vip-card {
+  width: min(100%, 420px); margin-top: 18px; padding: 14px 16px 12px; text-align: left;
+  display: flex; flex-direction: column; gap: 10px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--card);
+}
+.vip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.vip-title { font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--ink2); }
+.vip-lv { font-size: 11.5px; color: var(--ink2); }
+.vip-main { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; font-size: 12.5px; color: var(--ink2); }
+.vip-until { font-size: 15.5px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.vip-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.vip-row { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; }
+.vip-name { flex: 0 0 auto; color: var(--ink); }
+.vip-dt {
+  flex: 1; min-width: 0; color: var(--ink2); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vip-state { flex: 0 0 auto; font-size: 11.5px; color: var(--ink2); }
+.vip-tag {
+  margin-left: 5px; font-style: normal; font-size: 10px; line-height: 15px; padding: 0 5px;
+  border: 1px solid var(--line); border-radius: 4px; color: var(--ink2);
+}
+.vip-empty { font-size: 12.5px; color: var(--ink2); }
+.vip-note {
+  margin: 0; padding-top: 9px; border-top: 1px dashed var(--line);
+  font-size: 11.5px; line-height: 1.5; color: var(--ink2);
+}
+.vip-card.expired .vip-note { color: var(--ink); } /* 过期了：这句提醒别被灰色淹没 */
+/* 过期色（面色/文字色都走同一对）：.vip-card 前缀压过 .vip-until/.vip-state 自身的颜色声明 */
+.vip-card .is-expired { color: #c62828; }
+html[data-theme="dark"] .vip-card .is-expired { color: #e66; }
+
 /* ===================== 设置视图（对齐设计稿：分区标题 + 选项卡组 + 单选 + 下拉） ===================== */
 .set-view { max-width: 640px; padding-bottom: 12px; }
-.set-sec { margin: 26px 0 30px; }
-.set-sec:first-child { margin-top: 0; }
-.set-sec > h2 { margin: 0 0 4px; font-size: 20px; font-weight: 800; }
-.set-note { margin: 0 0 14px; font-size: 12.5px; }
-.set-sub { margin: 18px 0 8px; font-size: 14px; font-weight: 700; }
-.set-sub2 { margin-top: 14px; }
-.set-subnote { font-weight: 400; font-size: 12.5px; }
 .set-hint { margin: 6px 0 0; font-size: 11.5px; line-height: 1.5; }
 
 /* 选项卡按钮组（外观模式 / 窗口装饰 / 默认音质共用） */
@@ -708,21 +929,8 @@ html:not([data-theme="dark"]) .ghost-btn.danger:hover { background: #fdecec; bor
 .opt-card.q .q-lock { font-size: 10px; color: #ff8a3c; font-style: normal; }
 #quality-grid { max-width: 452px; } /* 约束为 4+3 换行（对齐设计稿） */
 
-/* 字体/后端/配置文件路径等「标签 + 输入」行 */
-.set-field { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; }
-.set-field > span { font-size: 13px; font-weight: 600; }
-.set-field select, .set-field input {
-  align-self: flex-start; min-width: 220px; padding: 7px 12px; border-radius: 9px;
-  border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; font: inherit;
-}
-.set-field select:disabled, .set-field input:disabled { opacity: .55; cursor: not-allowed; }
-.set-field select:not(:disabled):hover, .set-field input:not(:disabled):hover { border-color: var(--ink2); }
-/* 只读路径框：等宽字体方便照着敲，宽度随内容伸缩 */
-.set-field input[readonly] { cursor: text; width: 100%; max-width: 640px; font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 12.5px; }
-/* 字体设置：预设下拉 + 可直接编辑的 font-family 输入框（同一行，窄窗自动换行） */
-.set-field .font-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; width: 100%; }
-.set-field .font-row select { min-width: 190px; }
-.set-field .font-row input { flex: 1; min-width: 240px; cursor: text; font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 12.5px; }
+/* 「标签 + 输入」行的旧容器已由 .set-row/.set-row__label/.set-row__ctrl 取代（见文件末尾布局段），
+   这里只保留与容器无关的公共细节：等宽内容与 code 片段。 */
 .set-view code { padding: 1px 6px; border-radius: 6px; background: var(--ph); font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 12.5px; }
 
 /* 解码后端单选 */
@@ -760,3 +968,172 @@ body.ssd .winbtns, body.ssd .win-dragtop { display: none; }
 
 /* 歌词字体族（仅作用于正在播放页歌词，独立于界面字体） */
 .np-lyrics { font-family: var(--font-lyric, var(--font-default)); }
+
+/* ===================== 首页布局（页头 + 双栏领区 + 发丝线分隔的推荐网格） ===================== */
+/* 页头：标题 + 一句副标题（副标题继承 .page-title 的下边距节奏） */
+.home-pagehead { margin-bottom: 4px; }
+.home-pagehead .page-title { margin-bottom: 2px; }
+.home-pagehead p { margin: 0 0 16px; font-size: 12.5px; }
+
+/* 领区双栏：内容区够宽时并排，不够则自动堆成一列 */
+.home-lead {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 32px; margin-bottom: 28px;
+}
+.home-panel { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.home-feature-host { min-width: 0; }
+
+/* 精选卡：左封面右文案；文案底部的行动区沉到底（margin-top:auto），两栏底边对齐 */
+.home-feature { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 20px; min-width: 0; }
+.home-feature__art {
+  width: 160px; height: 160px; overflow: hidden;
+  border-radius: 10px; background: var(--ph);
+}
+.home-feature__art img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.home-feature__main { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.home-feature__overline {
+  margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--ink2);
+}
+.home-feature__title { margin: 0; width: 100%; font-size: 18px; font-weight: 800; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-feature__meta { margin: 0; font-size: 12px; }
+.home-feature__desc {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  margin: 0; font-size: 13px; line-height: 1.55; color: var(--ink2);
+}
+.home-feature__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 6px; }
+/* 次级按钮：同 gust-btn 结构，视觉更轻（透明底 + 发丝线） */
+.ghost-btn--quiet { background: transparent; color: var(--ink2); }
+
+/* 区块头：标题 18px + 一行说明；--split 变体把右侧动作推到行尾 */
+.sec-head { display: flex; align-items: baseline; gap: 10px; }
+.sec-head h2 { margin: 0; font-size: 18px; font-weight: 800; color: var(--ink); }
+.sec-head > .muted, .sec-head__title > .muted { font-size: 12px; }
+.sec-head--split { align-items: center; justify-content: space-between; gap: 12px; }
+.sec-head__title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+
+/* 新歌速递行内的缩进与行距（列表本身复用 .rows/.row） */
+.home-new-list { margin-top: 0; padding-bottom: 0; }
+.home-new-list .row { padding-right: 8px; padding-left: 8px; }
+
+/* 推荐区：与上方领区用发丝线分隔（不用块底色） */
+.home-recommendations { padding-top: 20px; border-top: 1px solid var(--line); }
+.home-recommendations .sec-head { margin-bottom: 12px; }
+.home-cards { margin-top: 0; }
+
+/* 区块错误/空态：陈述 + 后果 + 出口，左对齐一列 */
+.home-status { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 24px 0; }
+.home-status p { margin: 0; }
+.home-status__title { font-size: 15px; font-weight: 600; color: var(--ink); }
+
+/* 卡片悬停播放键：只做外观，命中区由 .card:hover 显隐控制 */
+.card-play {
+  position: absolute; right: 8px; bottom: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; padding: 0; border: 0; border-radius: 999px;
+  background: color-mix(in srgb, var(--cvg-accent, var(--acc)) 88%, #000);
+  color: #fff; cursor: pointer;
+  opacity: 0; transform: translateY(4px);
+  transition: opacity .14s ease, transform .14s ease;
+  box-shadow: 0 2px 8px #0004;
+}
+.card:hover .card-play, .card:focus-within .card-play { opacity: 1; transform: none; }
+.card-play:hover { background: var(--cvg-accent, var(--acc)); }
+
+/* ===================== 设置页布局（分区标签 + 发丝线分组 + 标签/控件同一行） ===================== */
+/* 分区标签：只切显隐不重渲染；下边发丝线与内容区接续 */
+.set-tabs { display: flex; align-items: center; gap: 4px; margin: 0 0 8px; border-bottom: 1px solid var(--line); }
+.set-tab {
+  position: relative; padding: 8px 14px; border: 0; background: transparent;
+  color: var(--ink2); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.set-tab:hover { color: var(--ink); }
+.set-tab.is-active { color: var(--cvg-accent, var(--acc)); border-bottom-color: var(--cvg-accent, var(--acc)); }
+
+/* 分区面板：与 .tag-panel 同一套切换机制（.set-view.tab-anim > .set-panel 的入场动画
+   定义在「标签页切换动画」段，见上文 .tag-tabs 附近） */
+.set-panel[hidden] { display: none; }
+.set-group { padding: 18px 0; }
+.set-group + .set-group { border-top: 1px solid var(--line); }
+/* 分组标题：13px 半粗 + 右侧可选的行内说明 */
+.set-label { margin-bottom: 10px; font-size: 13px; font-weight: 700; color: var(--ink); }
+.set-note-inline { margin-left: 4px; font-weight: 400; font-size: 12px; color: var(--ink2); }
+
+/* 「标签 + 控件」行：label 定宽，控件占满余宽，窄窗自动换行 */
+.set-row { display: flex; align-items: center; gap: 12px; padding: 4px 0; flex-wrap: wrap; }
+.set-row__label { flex: 0 0 84px; font-size: 13px; color: var(--ink); }
+.set-row__ctrl { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.set-row__ctrl select, .set-row__ctrl input {
+  height: 32px; padding: 0 12px; border-radius: 9px;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink); font: inherit; cursor: pointer;
+}
+.set-row__ctrl select:disabled, .set-row__ctrl input:disabled { opacity: .55; cursor: not-allowed; }
+.set-row__ctrl select:not(:disabled):hover, .set-row__ctrl input:not(:disabled):hover { border-color: var(--ink2); }
+.set-row__ctrl input[readonly] {
+  flex: 1; min-width: 240px; cursor: text;
+  font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 12.5px;
+}
+.set-row__ctrl.font-row select { min-width: 190px; }
+.set-row__ctrl.font-row input {
+  flex: 1; min-width: 240px; cursor: text;
+  font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 12.5px;
+}
+
+/* 设置页的分组不再用卡片底色，统一走发丝线；关于区居中收尾 */
+.set-view .set-about { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 32px 0; }
+
+/* ===================== 歌曲右键菜单（SongMenu） =====================
+   层 = body 下的 fixed 覆盖层（pointer-events:none），面板各自 fixed 定位：
+   避开 .route 的 transform/overflow 形成的新包含块，也避开队列面板/播放条的位置差异。
+   面板视觉沿用既有浮窗语言（音量/音质浮窗那套玻璃底 + 12px 圆角），不引入新配色。 */
+.ctx-layer { position: fixed; inset: 0; z-index: 80; pointer-events: none; }
+.ctx-menu {
+  position: fixed; z-index: 1; min-width: 200px; max-width: 300px; padding: 6px;
+  max-height: calc(100vh - 24px); overflow-y: auto;   /* 歌单多时子菜单自己滚，不越出视口 */
+  border-radius: 12px; pointer-events: auto;
+  background: var(--volpop); border: 1px solid var(--glass-line);
+  box-shadow: 0 12px 36px rgba(15,20,30,.22);
+  backdrop-filter: blur(24px) saturate(1.5); -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  animation: ctx-in .14s cubic-bezier(.22,.61,.36,1) both;
+}
+@keyframes ctx-in {
+  from { opacity: 0; transform: translateY(-3px) scale(.99); }
+  to   { opacity: 1; transform: none; }
+}
+.ct-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 10px; border: 0; border-radius: 8px; background: transparent;
+  color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+}
+.ct-item:hover:not(.disabled) { background: var(--press); }
+.ct-item.disabled { opacity: .45; cursor: default; }
+/* 危险项（从歌单删除）：与行内红心同色，是一眼可辨的既有语义 */
+.ct-item.danger { color: #e8465a; }
+.ct-item.danger:hover:not(.disabled) { background: color-mix(in srgb, #e8465a 12%, transparent); }
+.ct-ic { width: 18px; height: 18px; flex: 0 0 auto; display: grid; place-items: center; }
+.ct-ic:empty { display: none; }
+.ct-ic img { width: 18px; height: 18px; object-fit: cover; border-radius: 4px; display: block; }
+.ct-ic img.round { border-radius: 50%; }
+.ct-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ct-note {
+  flex: 0 1 auto; max-width: 140px; font-size: 11px; color: var(--idx);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ct-caret { flex: 0 0 auto; margin-left: 2px; color: var(--idx); font-size: 15px; line-height: 1; }
+.ct-empty { padding: 8px 10px; font-size: 12px; color: var(--idx); }
+
+/* 轻提示条：菜单动作（加入歌单 / 复制）没有原地视觉结果，用它回执 */
+.toast {
+  position: fixed; left: 50%; bottom: 92px; z-index: 88; max-width: 70vw;
+  transform: translate(-50%, 8px);
+  padding: 8px 16px; border-radius: 999px;
+  background: var(--card); border: 1px solid var(--line); color: var(--ink);
+  font-size: 12.5px; box-shadow: 0 10px 30px rgba(15,20,30,.22);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  opacity: 0; pointer-events: none;
+  transition: opacity .18s ease, transform .18s cubic-bezier(.22,.61,.36,1);
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.err { color: #e8465a; border-color: color-mix(in srgb, #e8465a 45%, var(--line)); }
+
