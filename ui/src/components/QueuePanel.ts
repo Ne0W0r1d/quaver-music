@@ -4,7 +4,7 @@
 //                    路由视图区（主页/搜索/歌手页…）自动让宽 = 整页缩放；
 //   宽度不够       → 浮窗（.float）固定于窗口右下、悬在内容之上（原行为）。
 import { player, type Song } from "../player";
-import { coverUrl } from "../lib/api";
+import { coverUrl, songTitle } from "../lib/api";
 import { icons } from "../lib/icons";
 
 /** 内容区达到该宽度才停靠（再窄会把视图区挤得放不下卡片网格） */
@@ -29,39 +29,61 @@ export function QueuePanel(): HTMLElement {
   el.querySelector<HTMLElement>("#qp-close")!.onclick = () => { player.queueOpen = false; player.notifyPublic(); };
   el.querySelector<HTMLElement>("#qp-clear")!.onclick = () => player.clearQueue();
 
-  // —— 形态切换：停靠 / 浮窗 ——
+  // —— 形态切换：停靠 / 浮窗（**与开合解耦**，见 applyLayout 的注释）——
   const contentEl = () => document.querySelector<HTMLElement>(".content");
   const contentBody = () => document.querySelector<HTMLElement>(".content-body");
   const npEl = () => document.querySelector<HTMLElement>(".np");
   const dockable = () => { const c = contentEl(); return !!c && c.clientWidth >= DOCK_MIN_CONTENT; };
-  function syncMount() {
-    const open = player.queueOpen;
-    // —— 正在播放全屏页：一律浮窗（固定右侧的通栏 dock 会把歌词区挤失衡，实测弃用）。
+
+  /** 定形态（停靠 .dock / 浮窗 .float）并换到对应父节点；返回**是否真的换了父节点**。
+   *
+   *  关键：形态只看内容区宽度，**跟开关无关 —— 关闭时也要定好**。
+   *  早期实现是「打开时才按宽度定形态」，于是首次展开会在同一帧里「换父节点 + 加 .open」，
+   *  浏览器把插入与类变更合并成一次样式重算，transition 压根不会启动 ——
+   *  表现就是「第一次展开没有动画，之后再展开就正常了」（换过一次父节点之后不再换）。
+   *  代价为零：关闭态是 width:0/opacity:0，隐藏着搬节点肉眼看不出。 */
+  function applyLayout(): boolean {
+    // 正在播放全屏页：一律浮窗（固定右侧的通栏 dock 会把歌词区挤失衡，实测弃用）。
     // float 挂 body、z:70 浮在全屏层（z:50）之上，开关仍由播放条队列按钮驱动；
-    // 收回全屏页后走下方正常逻辑按宽度停靠/浮窗。
-    if (npEl() && player.expanded) {
-      el.classList.remove("dock");
-      el.classList.add("float");
-      if (el.parentElement !== document.body) document.body.append(el);
-      el.classList.toggle("open", open);
-      return;
-    }
-    el.classList.toggle("open", open);
-    // 关闭时保持原位收起（避免「停靠位 → 右下角」的收起动画瞬移）；打开时按宽度定形态
-    const dock = open ? dockable() : el.classList.contains("dock");
+    // 收回全屏页后走正常逻辑按宽度停靠/浮窗。
+    const dock = !(npEl() && player.expanded) && dockable();
     el.classList.toggle("dock", dock);
     el.classList.toggle("float", !dock);
-    if (dock) {
-      const body = contentBody();
-      if (body && el.parentElement !== body) body.append(el); // 停靠：route 自动让宽
-    } else if (el.parentElement !== document.body) {
-      document.body.append(el); // 浮窗：挂 body，fixed 定位
-    }
+    const want = dock ? contentBody() : document.body;
+    if (!want || el.parentElement === want) return false;
+    want.append(el);
+    return true;
   }
-  const ro = new ResizeObserver(() => { if (player.queueOpen) syncMount(); });
+
+  function applyOpen() {
+    const open = player.queueOpen;
+    el.classList.toggle("open", open);
+    // 关闭态不只是「看不见」：连同 tab 焦点/读屏/「聚焦即滚进视野」一起摘掉。
+    // 面板必须常驻 DOM（不能用 display:none，否则没有过渡），不 inert 的话键盘 Tab 能进到里面，
+    // 而浏览器会把聚焦元素滚进视野 —— .content 一旦被程序化滚动，整个路由视图就横移
+    // （与 scrollIntoView 那起事故同源；见 revealCurrent 的注释）。
+    el.toggleAttribute("inert", !open);
+  }
+
+  /** 开合 + 形态。刚换过父节点就把 .open 推到下一帧：新插入的节点必须有一帧「关闭态」垫底，
+   *  过渡才有的可比（否则从无到有直接落在终态）。 */
+  function syncMount() {
+    if (applyLayout()) {
+      el.classList.remove("open");
+      requestAnimationFrame(applyOpen);
+      return;
+    }
+    applyOpen();
+  }
+  // 关闭时也让形态跟着宽度走：否则窗口尺寸变过之后的下一次展开又会「边换父节点边开」
+  const ro = new ResizeObserver(syncMount);
   const contentBox = contentEl();
   if (contentBox) ro.observe(contentBox);
   syncMount();
+  // 再补一次：本组件构造时节点**还没进 DOM**（壳层是 `document.body.append(NowPlaying(), QueuePanel())`），
+  // 上面那次定完形态后立刻被壳层搬去 body。等一帧再定，让首次展开时形态与父节点都已就位 ——
+  // 不补这一次也能靠 syncMount 的 rAF 兜底动画，但那样第一次展开仍会搬节点，不如让它彻底不动。
+  requestAnimationFrame(syncMount);
 
   // —— 列表渲染（订阅式：队列/指针/播放态变化才重建） ——
   const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]!);
@@ -79,8 +101,26 @@ export function QueuePanel(): HTMLElement {
       return;
     }
     player.queue.forEach((q, i) => list.append(rowOf(q, i)));
-    list.querySelector(".cur")?.scrollIntoView({ block: "nearest" });
+    revealCurrent();
   });
+
+  /** 把当前曲滚到列表可见处 —— **只动 .qp-list 自己的 scrollTop**。
+   *
+   *  千万别用 `row.scrollIntoView()`：它会把**所有**可滚祖先的 scrollport 一起滚。
+   *  `.content` 是 `position:relative; overflow:hidden`——overflow:hidden 的盒子**程序化照样能滚**
+   *  （scrollLeft 能设），于是路由视图会跟着横移。
+   *  浮窗态之所以没暴露：面板 fixed 挂在 body 下，宿主没有可滚祖先，`block:"nearest"` 无事可做；
+   *  一旦停靠（.content-body 内）就变成「0 宽 + overflow:hidden 裁切 + translateX(20px)」，
+   *  行落在内容区右缘之外 → `.content` 的 scrollLeft 被设上 → **切歌即 ContentView 错位**。
+   *  所以这里用 rect 差值自己滚，绝不碰祖先。 */
+  function revealCurrent() {
+    const row = list.querySelector<HTMLElement>(".cur");
+    if (!row) return;
+    const lr = list.getBoundingClientRect();
+    const rr = row.getBoundingClientRect();
+    if (rr.top < lr.top) list.scrollTop -= lr.top - rr.top;
+    else if (rr.bottom > lr.bottom) list.scrollTop += rr.bottom - lr.bottom;
+  }
 
   function rowOf(q: Song, i: number): HTMLElement {
     const row = document.createElement("div");
@@ -91,7 +131,7 @@ export function QueuePanel(): HTMLElement {
       <span class="qi-thumb">${pic ? `<img src="${pic}" alt="" loading="lazy"/>` : ""}</span>
       <span class="qi-i">${i === player.index ? (player.loading ? "…" : player.playing ? "♪" : "❚❚") : i + 1}</span>
       <span class="qi-main">
-        <span class="qi-n">${escapeHtml(q.name)}</span>
+        <span class="qi-n">${escapeHtml(songTitle(q))}</span>
         <span class="qi-a">${escapeHtml((q.singer ?? []).map((x) => x.name).join(" / "))}</span>
       </span>
       <button class="qi-del" title="移出队列" aria-label="移出队列">${icons.close}</button>

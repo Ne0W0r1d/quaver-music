@@ -6,6 +6,7 @@
 import "./style.css";
 import { api, coverUrl, upPic, identityBadges } from "./lib/api";
 import { favSonglists, loadFavSonglists, onFavSonglistsChange } from "./lib/favs";
+import { getSidebarCollapsed, setSidebarCollapsed } from "./lib/prefs";
 import { player } from "./player";
 import { PlayerBar } from "./components/PlayerBar";
 import { NowPlaying } from "./components/NowPlaying";
@@ -28,8 +29,12 @@ const icons: Record<string, string> = {
   disc: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/></svg>',
   heart:
     '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20s-7-4.6-9-9c-1.3-3 .8-6.5 4-6.5 2 0 3.5 1.2 5 3 1.5-1.8 3-3 5-3 3.2 0 5.3 3.5 4 6.5-2 4.4-9 9-9 9z"/></svg>',
+  // 设置：齿轮（外圈齿形 + 中心孔）。与其它线性图标同一套 24 网格 / currentColor 描边。
   settings:
-    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.4 5.4l2.1 2.1M16.5 16.5l2.1 2.1M18.6 5.4l-2.1 2.1M7.5 16.5l-2.1 2.1"/></svg>',
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="12" cy="12" r="3.1"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  // 侧栏缩回/展开：双 chevron。展开态指左（=往左收），缩态由 CSS 翻 180° 指右（=放出来）。
+  collapse:
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13.5 6.5 8 12l5.5 5.5M18.5 6.5 13 12l5.5 5.5"/></svg>',
   userPh:
     '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 19c1.5-3 4-4.5 7-4.5s5.5 1.5 7 4.5"/></svg>',
 };
@@ -156,11 +161,15 @@ export function bootShell() {
           </span>
         </a>
         <nav class="nav">
-          ${nav.map((n) => `<a href="${n.path}" data-route="${n.path.slice(1) || "/"}">${icons[n.icon]}<span>${n.label}</span></a>`).join("")}
+          ${nav.map((n) => `<a href="${n.path}" data-route="${n.path.slice(1) || "/"}" title="${n.label}">${icons[n.icon]}<span>${n.label}</span></a>`).join("")}
         </nav>
         <hr class="sep" />
         <div class="playlists" id="playlists"><div class="pl-empty">登录后可见歌单</div></div>
-        <a class="settings" href="#/settings" title="设置">${icons.settings}</a>
+        <!-- 侧栏底部：设置（齿轮）+ 缩回/展开。缩态下竖排居中，是缩态保留的两颗按钮之一。 -->
+        <div class="side-foot">
+          <a class="side-btn settings" href="#/settings" title="设置" aria-label="设置">${icons.settings}</a>
+          <button class="side-btn" id="side-collapse" type="button" title="缩回侧栏" aria-label="缩回侧栏">${icons.collapse}</button>
+        </div>
       </aside>
       <main class="content">
         <div class="content-top"></div>
@@ -213,6 +222,23 @@ export function bootShell() {
     }),
   );
 
+  // 侧栏缩回/展开：状态真相在 quaver.conf（Window.SidebarCollapsed），样式由 body.side-collapsed
+  // 驱动（启动时的初始 class 已在 main.ts 的 applySidebar() 里挂好，这里只接管交互后同步）。
+  // 图标方向靠 CSS 翻转，按钮文案/aria 得跟着状态走，否则缩态下读屏与悬停提示是反的。
+  const collapseBtn = frame.querySelector<HTMLButtonElement>("#side-collapse")!;
+  const syncCollapseBtn = () => {
+    const off = document.body.classList.contains("side-collapsed");
+    const label = off ? "展开侧栏" : "缩回侧栏";
+    collapseBtn.title = label;
+    collapseBtn.setAttribute("aria-label", label);
+    collapseBtn.setAttribute("aria-expanded", String(!off));
+  };
+  collapseBtn.addEventListener("click", () => {
+    setSidebarCollapsed(!getSidebarCollapsed());
+    syncCollapseBtn();
+  });
+  syncCollapseBtn();
+
   bootSidebar();
   renderRoute();
 }
@@ -227,12 +253,15 @@ const esc = (s: unknown) =>
   String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 // 单个歌单条目：封面 + 标题（副行可选，收藏的歌单用来标创建者）
+// title 恒给：侧栏缩回后只剩封面图，鼠标悬停是唯一认得出来的途径。
 function plItem(x: any, sub = ""): HTMLElement {
   const a = document.createElement("a");
   a.className = "pl";
   const pic = upPic(x.picurl || x.bigpic_url);
+  const title = String(x.title ?? "歌单");
+  a.title = sub ? `${title} · ${sub}` : title;
   a.innerHTML = `<span class="thumb">${pic ? `<img src="${pic}" alt="" loading="lazy"/>` : ""}</span>
-    <span class="pname"><span class="ptitle">${esc(x.title ?? "歌单")}</span>${sub ? `<span class="psub">${esc(sub)}</span>` : ""}</span>`;
+    <span class="pname"><span class="ptitle">${esc(title)}</span>${sub ? `<span class="psub">${esc(sub)}</span>` : ""}</span>`;
   a.href = `#/playlist?id=${encodeURIComponent(x.id ?? "")}&name=${encodeURIComponent(x.title ?? "歌单")}`;
   return a;
 }
